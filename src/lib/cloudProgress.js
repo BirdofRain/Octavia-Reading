@@ -60,6 +60,10 @@ export function mergeProgress(localProgress, cloudProgress) {
   if (!cloudProgress) return localProgress;
   if (!localProgress) return cloudProgress;
 
+  const localFamilies = Array.isArray(localProgress.totals?.wordFamiliesUsed) ? localProgress.totals.wordFamiliesUsed : [];
+  const cloudFamilies = Array.isArray(cloudProgress.totals?.wordFamiliesUsed) ? cloudProgress.totals.wordFamiliesUsed : [];
+  const mergedFamilies = Array.from(new Set([...localFamilies, ...cloudFamilies])).slice(0, 40);
+
   return {
     ...localProgress,
     ...cloudProgress,
@@ -69,6 +73,16 @@ export function mergeProgress(localProgress, cloudProgress) {
     attempts: Math.max(localProgress.attempts || 0, cloudProgress.attempts || 0),
     badges: Array.from(new Set([...(localProgress.badges || []), ...(cloudProgress.badges || [])])),
     rewardClaims: [...(cloudProgress.rewardClaims || []), ...(localProgress.rewardClaims || [])].slice(0, 50),
+    settings: {
+      activeReadingLevel: Math.max(
+        Number(localProgress.settings?.activeReadingLevel) || 1,
+        Number(cloudProgress.settings?.activeReadingLevel) || 1
+      ),
+      activeMathLevel: Math.max(
+        Number(localProgress.settings?.activeMathLevel) || 1,
+        Number(cloudProgress.settings?.activeMathLevel) || 1
+      ),
+    },
     totals: {
       ...(localProgress.totals || {}),
       ...(cloudProgress.totals || {}),
@@ -78,6 +92,11 @@ export function mergeProgress(localProgress, cloudProgress) {
       countingCorrect: Math.max(localProgress.totals?.countingCorrect || 0, cloudProgress.totals?.countingCorrect || 0),
       mathCorrect: Math.max(localProgress.totals?.mathCorrect || 0, cloudProgress.totals?.mathCorrect || 0),
       parentMinutes: Math.max(localProgress.totals?.parentMinutes || 0, cloudProgress.totals?.parentMinutes || 0),
+      readingWinsAtLevel2Plus: Math.max(
+        localProgress.totals?.readingWinsAtLevel2Plus || 0,
+        cloudProgress.totals?.readingWinsAtLevel2Plus || 0
+      ),
+      wordFamiliesUsed: mergedFamilies,
     },
     dailyLog: {
       ...(cloudProgress.dailyLog || {}),

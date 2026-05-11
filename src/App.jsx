@@ -10,8 +10,12 @@ import {
   supabaseConfigured,
   runCloudSyncSelfTests,
 } from "./lib/cloudProgress.js";
+import { LETTERS, WORD_FAMILIES } from "./data/phonics.js";
+import { wordsForReadingLevel, sentencesForReadingLevel } from "./data/reading.js";
+import { COUNTING_SETS, MATH_FACTS, countingSetsForMathLevel, mathFactsForLevel } from "./data/mathContent.js";
+import { filterByMaxLevel } from "./data/levels.js";
 
-const APP_VERSION = "1.3-badge-reset-fix";
+const APP_VERSION = "1.4-content-packs-levels";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const ADMIN_PIN = "8403";
 const ADMIN_PIN_WORDS = "eight four zero three";
@@ -109,30 +113,6 @@ const ClipboardIcon = ({ className = "" }) => (
   </Icon>
 );
 
-const LETTERS = [
-  { letter: "m", sound: "/m/", say: "mmm", clue: "like moon", emoji: "🌙" },
-  { letter: "s", sound: "/s/", say: "sss", clue: "like sun", emoji: "☀️" },
-  { letter: "a", sound: "/ă/", say: "ah", clue: "like apple", emoji: "🍎" },
-  { letter: "t", sound: "/t/", say: "tuh", clue: "like turtle", emoji: "🐢" },
-  { letter: "p", sound: "/p/", say: "puh", clue: "like puppy", emoji: "🐶" },
-  { letter: "i", sound: "/ĭ/", say: "ih", clue: "like igloo", emoji: "🧊" },
-  { letter: "n", sound: "/n/", say: "nnn", clue: "like nest", emoji: "🪺" },
-  { letter: "c", sound: "/k/", say: "kuh", clue: "like cat", emoji: "🐱" },
-  { letter: "o", sound: "/ŏ/", say: "aw", clue: "like octopus", emoji: "🐙" },
-  { letter: "d", sound: "/d/", say: "duh", clue: "like duck", emoji: "🦆" },
-];
-
-const WORDS = [
-  { word: "mat", parts: ["m", "a", "t"], sentence: "Sam sat on the mat.", emoji: "🟫" },
-  { word: "sat", parts: ["s", "a", "t"], sentence: "The cat sat.", emoji: "🐱" },
-  { word: "tap", parts: ["t", "a", "p"], sentence: "Tap the map.", emoji: "👆" },
-  { word: "pin", parts: ["p", "i", "n"], sentence: "The pin is in.", emoji: "📍" },
-  { word: "nap", parts: ["n", "a", "p"], sentence: "Dad can nap.", emoji: "😴" },
-  { word: "cat", parts: ["c", "a", "t"], sentence: "A cat can nap.", emoji: "🐈" },
-  { word: "dot", parts: ["d", "o", "t"], sentence: "Put a dot on it.", emoji: "🔴" },
-  { word: "cot", parts: ["c", "o", "t"], sentence: "The cot is soft.", emoji: "🛏️" },
-];
-
 const ENCOURAGEMENT = [
   "Great try!",
   "You are getting stronger!",
@@ -155,28 +135,6 @@ const MINI_GAMES = [
   { id: "rainbow_pop", cost: 5, title: "Unicorn Match", emoji: "🦄", description: "Flip cards and find matching emoji pairs." },
 ];
 
-const COUNTING_SETS = [
-  { count: 1, emoji: "🍎", label: "apple" },
-  { count: 2, emoji: "🐢", label: "turtles" },
-  { count: 3, emoji: "⭐", label: "stars" },
-  { count: 4, emoji: "🐱", label: "cats" },
-  { count: 5, emoji: "🌸", label: "flowers" },
-  { count: 6, emoji: "🦆", label: "ducks" },
-  { count: 7, emoji: "🍓", label: "berries" },
-  { count: 8, emoji: "🌙", label: "moons" },
-  { count: 9, emoji: "💎", label: "gems" },
-  { count: 10, emoji: "🧁", label: "cupcakes" },
-];
-
-const MATH_FACTS = [
-  { a: 1, b: 1, op: "+", answer: 2, story: "One apple and one more apple makes two apples." },
-  { a: 2, b: 1, op: "+", answer: 3, story: "Two stars and one more star makes three stars." },
-  { a: 3, b: 1, op: "+", answer: 4, story: "Three cats and one more cat makes four cats." },
-  { a: 2, b: 2, op: "+", answer: 4, story: "Two and two make four." },
-  { a: 5, b: 1, op: "-", answer: 4, story: "Five ducks, one waddles away, four are left." },
-  { a: 4, b: 1, op: "-", answer: 3, story: "Four stars, one disappears, three are left." },
-];
-
 function emptyDay() {
   return {
     opened: 0,
@@ -194,6 +152,12 @@ function emptyDay() {
   };
 }
 
+function clampLevel(n) {
+  const x = Number(n);
+  if (Number.isFinite(x)) return Math.min(4, Math.max(1, Math.round(x)));
+  return 1;
+}
+
 function defaultProgress() {
   return {
     version: APP_VERSION,
@@ -204,6 +168,10 @@ function defaultProgress() {
     attempts: 0,
     badges: [],
     rewardClaims: [],
+    settings: {
+      activeReadingLevel: 1,
+      activeMathLevel: 1,
+    },
     dailyLog: {
       [TODAY_KEY]: { ...emptyDay(), opened: 1, lastPlayedAt: new Date().toISOString() },
     },
@@ -214,6 +182,8 @@ function defaultProgress() {
       countingCorrect: 0,
       mathCorrect: 0,
       parentMinutes: 0,
+      wordFamiliesUsed: [],
+      readingWinsAtLevel2Plus: 0,
     },
   };
 }
@@ -253,11 +223,16 @@ const BADGES = [
   { id: "sound_scout", name: "Sound Scout", emoji: "🔊", description: "Get 5 sounds right", test: (p) => p.totals.soundsCorrect >= 5 },
   { id: "word_builder", name: "Word Builder", emoji: "🧱", description: "Build 3 words", test: (p) => p.totals.wordsBuilt >= 3 },
   { id: "sentence_reader", name: "Sentence Reader", emoji: "📖", description: "Read 2 sentences", test: (p) => p.totals.sentencesRead >= 2 },
+  { id: "sentence_starter", name: "Sentence Starter", emoji: "🗣️", description: "Read 5 sentences in Read It", test: (p) => p.totals.sentencesRead >= 5 },
+  { id: "word_family_explorer", name: "Word Family Explorer", emoji: "🧭", description: "Build words from 3 word families", test: (p) => Array.isArray(p.totals.wordFamiliesUsed) && new Set(p.totals.wordFamiliesUsed.filter(Boolean)).size >= 3 },
   { id: "ten_star_reader", name: "10-Star Reader", emoji: "🌟", description: "Earn 10 total stars", test: (p) => p.lifetimeStars >= 10 },
   { id: "two_day_streak", name: "2-Day Flame", emoji: "🔥", description: "Practice 2 days in a row", test: (p) => getStreak(p.dailyLog) >= 2 },
   { id: "five_day_streak", name: "5-Day Champion", emoji: "🏆", description: "Practice 5 days in a row", test: (p) => getStreak(p.dailyLog) >= 5 },
   { id: "counting_captain", name: "Counting Captain", emoji: "🔢", description: "Get 5 counting answers right", test: (p) => p.totals.countingCorrect >= 5 },
+  { id: "counting_ten", name: "Counting 10", emoji: "🔟", description: "Get 10 counting answers right", test: (p) => p.totals.countingCorrect >= 10 },
   { id: "math_helper", name: "Math Helper", emoji: "➕", description: "Get 3 math answers right", test: (p) => p.totals.mathCorrect >= 3 },
+  { id: "tiny_math_ten", name: "Tiny Math 10", emoji: "🧮", description: "Get 10 math answers right", test: (p) => p.totals.mathCorrect >= 10 },
+  { id: "level_2_reader", name: "Level 2 Reader", emoji: "📈", description: "Reading level 2+ and 5 reading wins", test: (p) => clampLevel(p.settings?.activeReadingLevel) >= 2 && (p.totals.readingWinsAtLevel2Plus || 0) >= 5 },
 ];
 
 function speak(text, rate = 0.72) {
@@ -300,7 +275,20 @@ function migrateProgress(raw) {
     version: APP_VERSION,
     badges: Array.isArray(safeRaw.badges) ? safeRaw.badges : [],
     rewardClaims: Array.isArray(safeRaw.rewardClaims) ? safeRaw.rewardClaims : [],
-    totals: { ...base.totals, ...(safeRaw.totals || {}) },
+    settings: {
+      ...base.settings,
+      ...(safeRaw.settings && typeof safeRaw.settings === "object" ? safeRaw.settings : {}),
+      activeReadingLevel: clampLevel(safeRaw.settings?.activeReadingLevel ?? base.settings.activeReadingLevel),
+      activeMathLevel: clampLevel(safeRaw.settings?.activeMathLevel ?? base.settings.activeMathLevel),
+    },
+    totals: {
+      ...base.totals,
+      ...(safeRaw.totals || {}),
+      wordFamiliesUsed: Array.isArray(safeRaw.totals?.wordFamiliesUsed) ? safeRaw.totals.wordFamiliesUsed : base.totals.wordFamiliesUsed,
+      readingWinsAtLevel2Plus: Number.isFinite(Number(safeRaw.totals?.readingWinsAtLevel2Plus))
+        ? Number(safeRaw.totals.readingWinsAtLevel2Plus)
+        : base.totals.readingWinsAtLevel2Plus,
+    },
     dailyLog: { ...base.dailyLog, ...(safeRaw.dailyLog || {}) },
   };
 
@@ -339,10 +327,16 @@ function runSelfTests() {
   console.assert(awardBadges({ ...p, lifetimeStars: 1 }).badges.includes("first_star"), "first star badge should award at 1 lifetime star");
   console.assert(!String(APP_VERSION).toLowerCase().includes("lucide"), "app version should not reference lucide dependency");
   console.assert(LETTERS.every((l) => l.say && l.clue), "every letter should include TTS-safe say text and clue text");
+  console.assert(wordsForReadingLevel(4).length >= 60, "word bank should include many decodable words");
+  console.assert(sentencesForReadingLevel(4).length >= 80, "sentence bank should include many practice sentences");
   console.assert(MINI_GAMES.every((g) => g.cost > 0), "every mini game should have a star cost");
-  console.assert(COUNTING_SETS.length >= 10, "counting mode should include numbers 1 through 10");
+  console.assert(COUNTING_SETS.length >= 25, "counting mode should include many counting sets up to 20");
+  console.assert(MATH_FACTS.length >= 80, "math bank should include at least 80 facts");
   console.assert(MATH_FACTS.every((f) => typeof f.answer === "number"), "math facts should have numeric answers");
-  console.assert(["math_helper", "counting_captain", "two_day_streak", "sound_scout", "word_builder", "sentence_reader"].every(Boolean), "cleanup badge ids should exist as strings");
+  console.assert(
+    ["math_helper", "counting_captain", "counting_ten", "tiny_math_ten", "two_day_streak", "sound_scout", "word_builder", "sentence_reader", "sentence_starter", "word_family_explorer", "level_2_reader"].every(Boolean),
+    "cleanup badge ids should exist as strings"
+  );
   console.assert((true || 0 >= 999) === true, "test mode should allow mini games regardless of stars");
   console.assert((false || 0 >= 3) === false, "normal mode should block mini games without enough stars");
 }
@@ -569,21 +563,47 @@ function KidRewards({ progress }) {
   );
 }
 
-function MathAndCounting({ logWin, logAttempt }) {
+function EmojiRow({ emoji, count, crossed = 0 }) {
+  return (
+    <div className="flex flex-wrap justify-center gap-1">
+      {Array.from({ length: count }).map((_, i) => (
+        <span key={i} className={`text-3xl sm:text-4xl ${i < crossed ? "relative opacity-40 line-through decoration-slate-900" : ""}`} aria-hidden>
+          {emoji}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function MathAndCounting({ logWin, logAttempt, activeMathLevel }) {
+  const countingPool = useMemo(() => countingSetsForMathLevel(activeMathLevel), [activeMathLevel]);
+  const mathPool = useMemo(() => mathFactsForLevel(activeMathLevel), [activeMathLevel]);
+
   const [mode, setMode] = useState("count");
-  const [countCard, setCountCard] = useState(() => pickRandom(COUNTING_SETS));
-  const [mathCard, setMathCard] = useState(() => pickRandom(MATH_FACTS));
+  const [countCard, setCountCard] = useState(() => pickRandom(countingPool));
+  const [mathCard, setMathCard] = useState(() => pickRandom(mathPool));
   const [result, setResult] = useState(null);
 
+  useEffect(() => {
+    setCountCard((c) => (countingPool.some((x) => x.count === c.count && x.emoji === c.emoji) ? c : pickRandom(countingPool)));
+  }, [countingPool]);
+
+  useEffect(() => {
+    setMathCard((c) => (mathPool.some((x) => x.id === c.id) ? c : pickRandom(mathPool)));
+  }, [mathPool]);
+
   const countChoices = useMemo(() => {
-    const wrong = COUNTING_SETS.map((x) => x.count).filter((n) => n !== countCard.count);
+    const wrong = countingPool.map((x) => x.count).filter((n) => n !== countCard.count);
     return shuffle([countCard.count, ...shuffle(wrong).slice(0, 3)]);
-  }, [countCard]);
+  }, [countCard, countingPool]);
 
   const mathChoices = useMemo(() => {
-    const pool = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter((n) => n !== mathCard.answer);
+    const pool = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].filter((n) => n !== mathCard.answer);
     return shuffle([mathCard.answer, ...shuffle(pool).slice(0, 3)]);
   }, [mathCard]);
+
+  const nextCountCard = () => pickRandom(countingPool);
+  const nextMathCard = () => pickRandom(mathPool);
 
   const chooseCount = (n) => {
     logAttempt("counting");
@@ -592,7 +612,7 @@ function MathAndCounting({ logWin, logAttempt }) {
       logWin("counting");
       speak(`Yes. ${countCard.count} ${countCard.label}.`, 0.72);
       setTimeout(() => {
-        setCountCard(pickRandom(COUNTING_SETS));
+        setCountCard(nextCountCard());
         setResult(null);
       }, 1000);
     } else {
@@ -609,7 +629,7 @@ function MathAndCounting({ logWin, logAttempt }) {
       logWin("math");
       speak(`Yes. The answer is ${mathCard.answer}.`, 0.72);
       setTimeout(() => {
-        setMathCard(pickRandom(MATH_FACTS));
+        setMathCard(nextMathCard());
         setResult(null);
       }, 1200);
     } else {
@@ -651,10 +671,8 @@ function MathAndCounting({ logWin, logAttempt }) {
           >
             🔊 Hear question
           </button>
-          <div className="mx-auto mt-5 flex max-w-xl flex-wrap justify-center gap-3 rounded-3xl bg-slate-50 p-4 text-5xl">
-            {Array.from({ length: countCard.count }).map((_, i) => (
-              <span key={i}>{countCard.emoji}</span>
-            ))}
+          <div className="mx-auto mt-5 max-w-xl rounded-3xl bg-slate-50 p-4 text-5xl">
+            <EmojiRow emoji={countCard.emoji} count={countCard.count} />
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
             {countChoices.map((n) => (
@@ -675,8 +693,32 @@ function MathAndCounting({ logWin, logAttempt }) {
           >
             🔊 Hear story
           </button>
-          <div className="mt-5 text-6xl font-black">
+          <div className="mt-5 text-5xl font-black sm:text-6xl">
             {mathCard.a} {mathCard.op} {mathCard.b} = ?
+          </div>
+          <div className="mx-auto mt-4 max-w-xl rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 p-3">
+            <p className="text-center text-xs font-black uppercase tracking-wide text-slate-500">Picture math</p>
+            {mathCard.op === "+" && (
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-center text-sm font-bold text-slate-600">First group</p>
+                  <EmojiRow emoji={mathCard.visualEmoji || "⭐"} count={mathCard.a} />
+                </div>
+                <div>
+                  <p className="text-center text-sm font-bold text-slate-600">More</p>
+                  <EmojiRow emoji={mathCard.visualEmoji || "⭐"} count={mathCard.b} />
+                </div>
+              </div>
+            )}
+            {mathCard.op === "-" && (
+              <div className="mt-2">
+                <p className="text-center text-sm font-bold text-slate-600">Start, then some go away</p>
+                <EmojiRow emoji={mathCard.visualEmoji || "⭐"} count={mathCard.a} crossed={mathCard.b} />
+              </div>
+            )}
+            {mathCard.op !== "+" && mathCard.op !== "-" && (
+              <p className="mt-2 text-center text-sm font-bold text-slate-600">Listen to the story and pick the answer.</p>
+            )}
           </div>
           <p className="mt-3 text-lg font-bold text-slate-600">{mathCard.story}</p>
           <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -879,24 +921,33 @@ function BadgeToast({ badge }) {
   );
 }
 
-function SoundsGame({ logWin, logAttempt }) {
-  const [target, setTarget] = useState(() => pickRandom(LETTERS));
-  const [choices, setChoices] = useState(() => shuffle(LETTERS).slice(0, 4));
+function SoundsGame({ logWin, logAttempt, activeReadingLevel }) {
+  const letterPool = useMemo(() => filterByMaxLevel(LETTERS, activeReadingLevel), [activeReadingLevel]);
+
+  const [target, setTarget] = useState(() => pickRandom(letterPool));
+  const [choices, setChoices] = useState(() => shuffle(letterPool).slice(0, 4));
   const [result, setResult] = useState(null);
   const [step, setStep] = useState("listen");
   const [showClue, setShowClue] = useState(false);
 
   useEffect(() => {
+    const pool = letterPool.length ? letterPool : LETTERS.filter((l) => l.level <= 1);
+    setTarget((t) => (pool.some((l) => l.letter === t.letter) ? t : pickRandom(pool)));
+  }, [letterPool]);
+
+  useEffect(() => {
     if (!choices.some((c) => c.letter === target.letter)) {
-      setChoices(shuffle([target, ...shuffle(LETTERS.filter((l) => l.letter !== target.letter)).slice(0, 3)]));
+      const pool = letterPool.length ? letterPool : LETTERS.filter((l) => l.level <= 1);
+      setChoices(shuffle([target, ...shuffle(pool.filter((l) => l.letter !== target.letter)).slice(0, 3)]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const nextRound = () => {
-    const next = pickRandom(LETTERS);
+    const pool = letterPool.length ? letterPool : LETTERS.filter((l) => l.level <= 1);
+    const next = pickRandom(pool);
     setTarget(next);
-    setChoices(shuffle([next, ...shuffle(LETTERS.filter((l) => l.letter !== next.letter)).slice(0, 3)]));
+    setChoices(shuffle([next, ...shuffle(pool.filter((l) => l.letter !== next.letter)).slice(0, 3)]));
     setResult(null);
     setStep("listen");
     setShowClue(false);
@@ -945,15 +996,41 @@ function SoundsGame({ logWin, logAttempt }) {
   );
 }
 
-function BuildWordGame({ logWin, logAttempt }) {
-  const [target, setTarget] = useState(() => pickRandom(WORDS));
+function BuildWordGame({ logWin, logAttempt, activeReadingLevel }) {
+  const wordPool = useMemo(() => wordsForReadingLevel(activeReadingLevel), [activeReadingLevel]);
+  const letterPool = useMemo(() => filterByMaxLevel(LETTERS, activeReadingLevel), [activeReadingLevel]);
+
+  const [target, setTarget] = useState(() => pickRandom(wordPool));
   const [built, setBuilt] = useState([]);
   const [result, setResult] = useState(null);
-  const choices = useMemo(() => shuffle([...new Set([...target.parts, ...shuffle(LETTERS.map((l) => l.letter)).slice(0, 3)])]).slice(0, 6), [target]);
+
+  useEffect(() => {
+    setTarget((t) => (wordPool.some((w) => w.word === t.word) ? t : pickRandom(wordPool)));
+  }, [wordPool]);
+
+  const familyLabel = useMemo(() => {
+    if (!target.family) return null;
+    const fam = WORD_FAMILIES.find((f) => f.id === target.family);
+    return fam ? fam.label : `-${target.family}`;
+  }, [target]);
+
+  const choices = useMemo(() => {
+    const needed = [...new Set(target.parts)];
+    const poolLetters = letterPool.length ? letterPool.map((l) => l.letter) : LETTERS.filter((l) => l.level <= 1).map((l) => l.letter);
+    const distractorCount = Math.max(0, 6 - needed.length);
+    const extras = shuffle(poolLetters.filter((l) => !needed.includes(l))).slice(0, distractorCount);
+    const merged = shuffle([...needed, ...extras]);
+    while (merged.length < 4) {
+      const filler = pickRandom(poolLetters) || "a";
+      if (!merged.includes(filler)) merged.push(filler);
+    }
+    return merged.slice(0, 6);
+  }, [target, letterPool]);
+
   const nextIndex = built.length;
 
   const nextRound = () => {
-    setTarget(pickRandom(WORDS));
+    setTarget(pickRandom(wordPool));
     setBuilt([]);
     setResult(null);
   };
@@ -968,7 +1045,7 @@ function BuildWordGame({ logWin, logAttempt }) {
       speakSound(LETTERS.find((l) => l.letter === letter));
       if (newBuilt.length === target.parts.length) {
         setResult({ type: "good", text: "You built it!" });
-        logWin("build");
+        logWin("build", { family: target.family });
         setTimeout(() => speakWordSlow(target), 150);
       }
     } else {
@@ -983,6 +1060,7 @@ function BuildWordGame({ logWin, logAttempt }) {
       <ResultToast result={result} />
       <div className="rounded-[2rem] border-2 border-slate-900 bg-lime-100 p-5 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
         <p className="text-lg font-black text-slate-600">Build a Word</p>
+        {familyLabel && <p className="mt-1 text-sm font-bold text-slate-500">Word family {familyLabel}</p>}
         <div className="mt-1 text-6xl">{target.emoji}</div>
         <h2 className="mt-2 text-3xl font-black">Tap the letters in order</h2>
         <div className="mt-5 flex justify-center gap-3">
@@ -1014,18 +1092,35 @@ function BuildWordGame({ logWin, logAttempt }) {
   );
 }
 
-function ReadGame({ logWin }) {
-  const [card, setCard] = useState(() => pickRandom(WORDS));
+function normalizeWordToken(raw) {
+  return raw.replace(/[^a-z]/gi, "").toLowerCase();
+}
+
+function ReadGame({ logWin, activeReadingLevel }) {
+  const sentencePool = useMemo(() => sentencesForReadingLevel(activeReadingLevel), [activeReadingLevel]);
+  const [card, setCard] = useState(() => pickRandom(sentencePool));
   const [revealed, setRevealed] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
-  const words = card.sentence.split(" ");
+
+  useEffect(() => {
+    setCard((c) => (sentencePool.some((s) => s.id === c.id) ? c : pickRandom(sentencePool)));
+  }, [sentencePool]);
+
+  const focusSet = useMemo(() => new Set((card.focusWords || []).map((w) => w.toLowerCase())), [card]);
+  const words = card.text.split(/\s+/);
 
   const markRead = () => {
     setCelebrate(true);
-    logWin("read");
+    logWin("read", { sentenceId: card.id });
     speak("You read it! Amazing work.");
     setTimeout(() => setCelebrate(false), 1200);
   };
+
+  const emojiForCard = useMemo(() => {
+    const first = (card.focusWords && card.focusWords[0]) || card.text.split(/\s+/)[0] || "read";
+    const hit = LETTERS.find((l) => l.letter === normalizeWordToken(first).slice(0, 1));
+    return hit?.emoji || "📖";
+  }, [card.id, card.text, card.focusWords]);
 
   return (
     <div className="rq-page mx-auto max-w-4xl px-4 pb-10">
@@ -1033,21 +1128,25 @@ function ReadGame({ logWin }) {
         <p className="text-lg font-black text-slate-600">Read It!</p>
         <h2 className="mt-2 text-3xl font-black">Read the sentence out loud</h2>
         <div className="my-6 rounded-[2rem] border-2 border-slate-900 bg-white p-5 shadow-inner">
-          <div className="mb-4 text-7xl">{card.emoji}</div>
+          <div className="mb-4 text-7xl">{emojiForCard}</div>
           <div className="flex flex-wrap justify-center gap-3">
-            {words.map((w, i) => (
-              <button
-                key={`${w}-${i}`}
-                onClick={() => speak(w.replace(/[^a-z]/gi, ""), 0.7)}
-                className={`rq-button rounded-2xl px-3 py-2 text-4xl font-black ${w.toLowerCase().includes(card.word) ? "bg-amber-200 underline decoration-4" : "bg-slate-100"}`}
-              >
-                {w}
-              </button>
-            ))}
+            {words.map((w, i) => {
+              const key = normalizeWordToken(w);
+              const isFocus = focusSet.has(key);
+              return (
+                <button
+                  key={`${card.id}-${w}-${i}`}
+                  onClick={() => speak(key || w.replace(/[^a-z]/gi, "") || card.text, 0.7)}
+                  className={`rq-button rounded-2xl px-3 py-2 text-4xl font-black ${isFocus ? "bg-amber-200 underline decoration-4 decoration-amber-700" : "bg-slate-100"}`}
+                >
+                  {w}
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="flex flex-wrap justify-center gap-3">
-          <button onClick={() => speak(card.sentence, 0.75)} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
+          <button onClick={() => speak(card.text, 0.75)} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
             <VolumeIcon className="mr-2 text-xl" /> Hear it
           </button>
           <button onClick={() => setRevealed(!revealed)} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
@@ -1056,17 +1155,23 @@ function ReadGame({ logWin }) {
           <button onClick={markRead} className="rq-button rounded-full border-2 border-slate-900 bg-emerald-200 px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
             I read it!
           </button>
-          <button onClick={() => { setCard(pickRandom(WORDS)); setRevealed(false); }} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
+          <button
+            onClick={() => {
+              setCard(pickRandom(sentencePool));
+              setRevealed(false);
+            }}
+            className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
+          >
             New sentence
           </button>
         </div>
         {revealed && (
           <div className="rq-pop mx-auto mt-5 max-w-xl rounded-3xl border-2 border-slate-900 bg-white p-4 text-left font-bold">
-            <p>
-              1. Find the special word: <span className="text-2xl font-black">{card.word}</span>
-            </p>
-            <p>2. Tap hard words to hear them.</p>
-            <p>3. Read slowly like this: “{card.sentence}”</p>
+            <p>1. Focus words are underlined in yellow.</p>
+            <p>2. Tap any word to hear it.</p>
+            <p>3. Read slowly like this: “{card.text}”</p>
+            {card.helperPrompt && <p className="mt-2 text-slate-600">Tip: {card.helperPrompt}</p>}
+            <p className="mt-2 text-sm text-slate-500">Type: {card.type === "sight-word-supported" ? "some helper words" : "mostly decodable"}</p>
           </div>
         )}
       </div>
@@ -1184,7 +1289,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
       );
       return {
         ...old,
-        badges: (old.badges || []).filter((id) => !["math_helper", "counting_captain"].includes(id)),
+        badges: (old.badges || []).filter((id) => !["math_helper", "counting_captain", "counting_ten", "tiny_math_ten"].includes(id)),
         totals: {
           ...old.totals,
           countingCorrect: 0,
@@ -1212,12 +1317,24 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
       );
       return {
         ...old,
-        badges: (old.badges || []).filter((id) => !["sound_scout", "word_builder", "sentence_reader"].includes(id)),
+        badges: (old.badges || []).filter(
+          (id) =>
+            ![
+              "sound_scout",
+              "word_builder",
+              "sentence_reader",
+              "sentence_starter",
+              "word_family_explorer",
+              "level_2_reader",
+            ].includes(id)
+        ),
         totals: {
           ...old.totals,
           soundsCorrect: 0,
           wordsBuilt: 0,
           sentencesRead: 0,
+          wordFamiliesUsed: [],
+          readingWinsAtLevel2Plus: 0,
         },
         dailyLog: cleanedDailyLog,
       };
@@ -1332,6 +1449,64 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
           <div className="mt-1 text-2xl font-black">{testMode ? "ON" : "OFF"}</div>
           <div className="text-xs font-bold text-slate-600">Mini games cost 0 when ON</div>
         </button>
+      </div>
+
+      <div className="rounded-[2rem] border-2 border-slate-900 bg-emerald-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
+        <h3 className="text-2xl font-black">Learning settings</h3>
+        <p className="mt-2 font-semibold text-slate-700">Pick the highest pack Octavia should see. Games include that level and easier content. Saved with cloud progress.</p>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+            <p className="font-black text-slate-800">Active reading level</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={`rl-${n}`}
+                  type="button"
+                  onClick={() =>
+                    setProgress((old) => ({
+                      ...old,
+                      settings: { ...(old.settings || {}), activeReadingLevel: clampLevel(n) },
+                    }))
+                  }
+                  className={`rq-button rounded-full border-2 border-slate-900 px-4 py-2 font-black shadow-[0_3px_0_rgba(15,23,42,1)] ${
+                    clampLevel(progress.settings?.activeReadingLevel) === n ? "bg-emerald-200" : "bg-white"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="font-black text-slate-800">Active math level</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={`ml-${n}`}
+                  type="button"
+                  onClick={() =>
+                    setProgress((old) => ({
+                      ...old,
+                      settings: { ...(old.settings || {}), activeMathLevel: clampLevel(n) },
+                    }))
+                  }
+                  className={`rq-button rounded-full border-2 border-slate-900 px-4 py-2 font-black shadow-[0_3px_0_rgba(15,23,42,1)] ${
+                    clampLevel(progress.settings?.activeMathLevel) === n ? "bg-emerald-200" : "bg-white"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <StatCard icon={<VolumeIcon />} label="Letters in pool" value={filterByMaxLevel(LETTERS, clampLevel(progress.settings?.activeReadingLevel)).length} />
+          <StatCard icon={<BookIcon />} label="Build-a-word pool" value={wordsForReadingLevel(clampLevel(progress.settings?.activeReadingLevel)).length} />
+          <StatCard icon={<BookIcon />} label="Read It sentences" value={sentencesForReadingLevel(clampLevel(progress.settings?.activeReadingLevel)).length} />
+          <StatCard icon={<ClipboardIcon />} label="Counting sets" value={countingSetsForMathLevel(clampLevel(progress.settings?.activeMathLevel)).length} />
+          <StatCard icon={<ClipboardIcon />} label="Tiny math facts" value={mathFactsForLevel(clampLevel(progress.settings?.activeMathLevel)).length} />
+        </div>
       </div>
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-sky-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
@@ -1521,11 +1696,11 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
           </button>
           <button onClick={resetMathAndCountingTestData} className="rq-button rounded-2xl border-2 border-slate-900 bg-white px-4 py-3 text-left font-black shadow-[0_3px_0_rgba(15,23,42,1)]">
             🔢 Reset math/counting test data
-            <span className="block text-sm font-bold text-slate-600">Clears math/count totals and removes Math Helper + Counting Captain.</span>
+            <span className="block text-sm font-bold text-slate-600">Clears math/count totals and removes math/counting badges (including Counting 10 and Tiny Math 10).</span>
           </button>
           <button onClick={resetReadingBadgeTestData} className="rq-button rounded-2xl border-2 border-slate-900 bg-white px-4 py-3 text-left font-black shadow-[0_3px_0_rgba(15,23,42,1)]">
             📚 Reset reading badge test data
-            <span className="block text-sm font-bold text-slate-600">Clears sound/word/sentence totals and removes reading badges.</span>
+            <span className="block text-sm font-bold text-slate-600">Clears sound/word/sentence totals, word-family tracking, level-2 win counts, and related reading badges.</span>
           </button>
           <button onClick={removeStreakBadgesOnly} className="rq-button rounded-2xl border-2 border-slate-900 bg-white px-4 py-3 text-left font-black shadow-[0_3px_0_rgba(15,23,42,1)]">
             🔥 Remove streak badges only
@@ -1630,6 +1805,9 @@ export default function App() {
       return defaultProgress();
     }
   });
+
+  const activeReadingLevel = clampLevel(progress.settings?.activeReadingLevel);
+  const activeMathLevel = clampLevel(progress.settings?.activeMathLevel);
 
   const progressRef = useRef(progress);
   progressRef.current = progress;
@@ -1760,7 +1938,7 @@ export default function App() {
     });
   };
 
-  const logWin = (kind) => {
+  const logWin = (kind, meta = {}) => {
     updateProgress((old) => {
       const day = old.dailyLog[TODAY_KEY] || emptyDay();
       const add = {
@@ -1770,6 +1948,12 @@ export default function App() {
         countingCorrect: kind === "counting" ? 1 : 0,
         mathCorrect: kind === "math" ? 1 : 0,
       };
+      const levelR = clampLevel(old.settings?.activeReadingLevel);
+      const readingWin = ["sounds", "build", "read"].includes(kind) && levelR >= 2;
+      let wordFamiliesUsed = Array.isArray(old.totals.wordFamiliesUsed) ? [...old.totals.wordFamiliesUsed] : [];
+      if (kind === "build" && meta.family && typeof meta.family === "string" && !wordFamiliesUsed.includes(meta.family)) {
+        wordFamiliesUsed = [...wordFamiliesUsed, meta.family];
+      }
       return {
         ...old,
         stars: old.stars + 1,
@@ -1796,6 +1980,8 @@ export default function App() {
           sentencesRead: old.totals.sentencesRead + add.sentencesRead,
           countingCorrect: (old.totals.countingCorrect || 0) + add.countingCorrect,
           mathCorrect: (old.totals.mathCorrect || 0) + add.mathCorrect,
+          wordFamiliesUsed,
+          readingWinsAtLevel2Plus: (old.totals.readingWinsAtLevel2Plus || 0) + (readingWin ? 1 : 0),
         },
       };
     });
@@ -1815,9 +2001,9 @@ export default function App() {
       <BadgeToast badge={newBadge} />
       <div key={mode}>
         {mode === "home" && <Home setMode={setMode} progress={progress} />}
-        {mode === "sounds" && <SoundsGame logWin={logWin} logAttempt={logAttempt} />}
-        {mode === "build" && <BuildWordGame logWin={logWin} logAttempt={logAttempt} />}
-        {mode === "read" && <ReadGame logWin={logWin} />}
+        {mode === "sounds" && <SoundsGame logWin={logWin} logAttempt={logAttempt} activeReadingLevel={activeReadingLevel} />}
+        {mode === "build" && <BuildWordGame logWin={logWin} logAttempt={logAttempt} activeReadingLevel={activeReadingLevel} />}
+        {mode === "read" && <ReadGame logWin={logWin} activeReadingLevel={activeReadingLevel} />}
         {mode === "admin" && (
           <AdminDashboard
             progress={progress}
@@ -1837,7 +2023,7 @@ export default function App() {
         )}
         {mode === "kidRewards" && <KidRewards progress={progress} />}
         {mode === "miniGames" && <MiniGames progress={progress} setProgress={updateProgress} testMode={testMode} />}
-        {mode === "math" && <MathAndCounting logWin={logWin} logAttempt={logAttempt} />}
+        {mode === "math" && <MathAndCounting logWin={logWin} logAttempt={logAttempt} activeMathLevel={activeMathLevel} />}
       </div>
     </main>
   );
