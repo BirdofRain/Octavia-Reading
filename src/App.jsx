@@ -11,11 +11,11 @@ import {
   runCloudSyncSelfTests,
 } from "./lib/cloudProgress.js";
 import { LETTERS, WORD_FAMILIES } from "./data/phonics.js";
-import { wordsForReadingLevel, sentencesForReadingLevel } from "./data/reading.js";
+import { wordsForReadingLevel, sentencesForReadingLevel, countBirdBuddySentences } from "./data/reading.js";
 import { COUNTING_SETS, MATH_FACTS, countingSetsForMathLevel, mathFactsForLevel } from "./data/mathContent.js";
 import { filterByMaxLevel } from "./data/levels.js";
 
-const APP_VERSION = "1.4-content-packs-levels";
+const APP_VERSION = "1.4.1-bird-buddies-math";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const ADMIN_PIN = "8403";
 const ADMIN_PIN_WORDS = "eight four zero three";
@@ -331,7 +331,23 @@ function runSelfTests() {
   console.assert(sentencesForReadingLevel(4).length >= 80, "sentence bank should include many practice sentences");
   console.assert(MINI_GAMES.every((g) => g.cost > 0), "every mini game should have a star cost");
   console.assert(COUNTING_SETS.length >= 25, "counting mode should include many counting sets up to 20");
+  console.assert(COUNTING_SETS.some((c) => c.count >= 20), "counting sets should include counts up to 20");
   console.assert(MATH_FACTS.length >= 80, "math bank should include at least 80 facts");
+  console.assert(MATH_FACTS.some((f) => f.answer >= 20), "math bank should include facts with answers up to 20");
+  console.assert(countBirdBuddySentences() >= 10, "sentence bank should include bird buddy sentences");
+  console.assert(
+    MATH_FACTS.every(
+      (f) =>
+        f.id &&
+        typeof f.answer === "number" &&
+        typeof f.level === "number" &&
+        typeof f.story === "string" &&
+        f.story.length > 0 &&
+        typeof f.visualEmoji === "string" &&
+        f.visualEmoji.length > 0
+    ),
+    "every math fact should include id, answer, level, story, and visualEmoji"
+  );
   console.assert(MATH_FACTS.every((f) => typeof f.answer === "number"), "math facts should have numeric answers");
   console.assert(
     ["math_helper", "counting_captain", "counting_ten", "tiny_math_ten", "two_day_streak", "sound_scout", "word_builder", "sentence_reader", "sentence_starter", "word_family_explorer", "level_2_reader"].every(Boolean),

@@ -88,6 +88,15 @@ const WORD_EMOJI = {
   web: "🕸️",
   dot: "🔴",
   cot: "🛏️",
+  nest: "🪺",
+  pet: "🐦",
+  egg: "🥚",
+  seed: "🌾",
+  wing: "🪽",
+  beak: "🐦",
+  bird: "🐦",
+  cage: "🦜",
+  chirp: "🐤",
 };
 
 function sentenceForFamilyWord(familyId, word) {
@@ -203,7 +212,20 @@ const extras = [
   { word: "cot", parts: parts("cot"), family: null, level: 2, emoji: "🛏️", sentence: "The cot is soft." },
 ];
 
-export const WORDS = [...fromFamilies, ...extras];
+/** Bird Buddies — decodable or short words for Build a Word */
+const birdBuddyWords = [
+  { word: "nest", parts: parts("nest"), family: "bird", level: 2, emoji: "🪺", sentence: "The egg is in the nest." },
+  { word: "pet", parts: parts("pet"), family: "bird", level: 2, emoji: "🐦", sentence: "A pet bird can sit." },
+  { word: "egg", parts: parts("egg"), family: "bird", level: 2, emoji: "🥚", sentence: "The egg is in the nest." },
+  { word: "seed", parts: parts("seed"), family: "bird", level: 2, emoji: "🌾", sentence: "The seed is in the cup." },
+  { word: "wing", parts: parts("wing"), family: "bird", level: 3, emoji: "🪽", sentence: "The bird has a wing." },
+  { word: "beak", parts: parts("beak"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird has a beak." },
+  { word: "bird", parts: parts("bird"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird can sit." },
+  { word: "cage", parts: parts("cage"), family: "bird", level: 3, emoji: "🦜", sentence: "The bird is in the cage." },
+  { word: "chirp", parts: parts("chirp"), family: "bird", level: 4, emoji: "🐤", sentence: "The bird can chirp." },
+];
+
+export const WORDS = [...fromFamilies, ...extras, ...birdBuddyWords];
 
 let sid = 1;
 function S(text, focusWords, level, type, helperPrompt) {
@@ -337,7 +359,52 @@ export const SENTENCE_BANK = [
   S("The wig sat on the hat.", ["wig", "hat", "sat"], 4, "sight-word-supported", "Silly hat stack."),
   S("A fat cat sat.", ["fat", "cat", "sat"], 2, "decodable", "Fat cat nap."),
   S("The map led to the mat.", ["map", "mat", "led"], 4, "sight-word-supported", "Led means showed the way."),
+  S("The bird is in the cage.", ["bird", "cage"], 2, "sight-word-supported", "Look for the word bird."),
+  S("The bird sits on the perch.", ["bird", "sits", "perch"], 3, "sight-word-supported", "Tap hard words and read slowly."),
+  S("The bird can chirp.", ["bird", "chirp"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The bird has seeds.", ["bird", "seeds"], 2, "sight-word-supported", "Look for the word bird."),
+  S("The egg is in the nest.", ["egg", "nest"], 2, "sight-word-supported", "Tap egg and nest."),
+  S("The green bird can hop.", ["green", "bird", "hop"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The blue bird is soft.", ["blue", "bird", "soft"], 3, "sight-word-supported", "Tap hard words and read slowly."),
+  S("Mom sees the bird.", ["Mom", "sees", "bird"], 2, "sight-word-supported", "Look for the word bird."),
+  S("Dad feeds the bird.", ["Dad", "feeds", "bird"], 2, "sight-word-supported", "Find the bird word first."),
+  S("The bird has a wing.", ["bird", "wing"], 3, "sight-word-supported", "Tap wing slowly."),
+  S("The bird can flap.", ["bird", "flap"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The bird is on the rug.", ["bird", "rug"], 2, "sight-word-supported", "Look for the word bird."),
+  S("A pet bird can sit.", ["pet", "bird", "sit"], 2, "sight-word-supported", "Tap pet and sit."),
+  S("The bird chirps and hops.", ["bird", "chirps", "hops"], 3, "sight-word-supported", "Tap hard words and read slowly."),
+  S("The seed is in the cup.", ["seed", "cup"], 2, "sight-word-supported", "Tap seed and cup."),
+  S("The bird has an egg.", ["bird", "egg"], 2, "sight-word-supported", "Find the bird word first."),
+  S("The nest is soft.", ["nest", "soft"], 2, "sight-word-supported", "Tap nest slowly."),
+  S("The bird can fly.", ["bird", "fly"], 3, "sight-word-supported", "Look for the word bird."),
+  S("The yellow bird sits.", ["yellow", "bird", "sits"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The bird has a beak.", ["bird", "beak"], 3, "sight-word-supported", "Tap beak slowly."),
+  S("Two birds on a perch.", ["birds", "perch"], 3, "sight-word-supported", "Tap hard words and read slowly."),
+  S("The bird pecks a seed.", ["bird", "seed"], 2, "sight-word-supported", "Look for the word bird."),
+  S("The hen is a bird.", ["hen", "bird"], 2, "sight-word-supported", "Hen is a bird too."),
+  S("The bird hides in the nest.", ["bird", "nest", "hides"], 3, "sight-word-supported", "Tap hard words and read slowly."),
+  S("A tiny egg in the nest.", ["egg", "nest", "tiny"], 3, "sight-word-supported", "Tap egg and nest."),
+  S("The bird rests on the mat.", ["bird", "rests", "mat"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The bird has a feather.", ["bird", "feather"], 4, "sight-word-supported", "Tap feather slowly."),
+  S("The bird has soft feathers.", ["bird", "feathers", "soft"], 4, "sight-word-supported", "Tap hard words and read slowly."),
+  S("The bird flaps both wings.", ["bird", "wings", "flaps"], 4, "sight-word-supported", "Find the bird word first."),
+  S("The pet bird chirps loud.", ["pet", "bird", "chirps"], 4, "sight-word-supported", "Tap pet and bird."),
+  S("The cage has a perch.", ["cage", "perch"], 3, "sight-word-supported", "Tap cage and perch."),
+  S("The bird hops on the rug.", ["bird", "hops", "rug"], 3, "sight-word-supported", "Look for the word bird."),
+  S("Mom fills the cup with seeds.", ["Mom", "seeds", "cup"], 4, "sight-word-supported", "Tap seeds slowly."),
+  S("The blue bird has seeds.", ["blue", "bird", "seeds"], 3, "sight-word-supported", "Find the bird word first."),
 ];
+
+/** For tests: sentences mentioning bird theme keywords */
+export function countBirdBuddySentences() {
+  const keys = ["bird", "birds", "nest", "egg", "eggs", "seed", "seeds", "wing", "wings", "beak", "perch", "cage", "chirp", "chirps", "feather", "feathers", "flap"];
+  return SENTENCE_BANK.filter((s) => keys.some((k) => s.text.toLowerCase().includes(k))).length;
+}
+
+/** Words tagged with Bird Buddies family */
+export function countBirdBuddyWords() {
+  return WORDS.filter((w) => w.family === "bird").length;
+}
 
 export function wordsForReadingLevel(activeReadingLevel) {
   return filterByMaxLevel(WORDS, activeReadingLevel);

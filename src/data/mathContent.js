@@ -30,7 +30,7 @@ const COUNT_EMOJIS = [
 ];
 
 /** Counting sets 1–20, at least 25 entries */
-export const COUNTING_SETS = Array.from({ length: 25 }, (_, i) => {
+const BASE_COUNTING_SETS = Array.from({ length: 25 }, (_, i) => {
   const count = (i % 20) + 1;
   const pack = COUNT_EMOJIS[i % COUNT_EMOJIS.length];
   const level = count <= 5 ? 1 : count <= 10 ? 2 : count <= 15 ? 3 : 4;
@@ -41,6 +41,23 @@ export const COUNTING_SETS = Array.from({ length: 25 }, (_, i) => {
     level,
   };
 });
+
+/** Bird Buddies counting (10–20) for extra variety */
+const BIRD_COUNTING_SETS = [
+  { count: 10, emoji: "🌾", label: "seeds", level: 2 },
+  { count: 11, emoji: "🪶", label: "feathers", level: 2 },
+  { count: 12, emoji: "🥚", label: "eggs", level: 2 },
+  { count: 13, emoji: "🐦", label: "birds", level: 3 },
+  { count: 14, emoji: "🪽", label: "wings", level: 3 },
+  { count: 15, emoji: "🪺", label: "nests", level: 3 },
+  { count: 16, emoji: "🌾", label: "seeds", level: 3 },
+  { count: 17, emoji: "🪶", label: "feathers", level: 4 },
+  { count: 18, emoji: "🥚", label: "eggs", level: 4 },
+  { count: 19, emoji: "🐦", label: "birds", level: 4 },
+  { count: 20, emoji: "⭐", label: "stars", level: 4 },
+];
+
+export const COUNTING_SETS = [...BASE_COUNTING_SETS, ...BIRD_COUNTING_SETS];
 
 let mid = 1;
 
@@ -152,6 +169,84 @@ for (let total = 3; total <= 8; total += 1) {
       );
     }
   }
+}
+
+function levelForAnswer10to20(answer) {
+  if (answer <= 12) return 2;
+  if (answer <= 16) return 3;
+  return 4;
+}
+
+/** Answers 10–20: addition and subtraction within 20, many bird-themed stories */
+const FACTS_10_TO_20_RAW = [
+  { a: 9, b: 1, op: "+", answer: 10, story: "Nine seeds and one more seed make ten seeds.", visualEmoji: "🌾" },
+  { a: 8, b: 2, op: "+", answer: 10, story: "Eight eggs plus two eggs make ten eggs.", visualEmoji: "🥚" },
+  { a: 7, b: 3, op: "+", answer: 10, story: "Seven stars plus three stars make ten stars.", visualEmoji: "⭐" },
+  { a: 6, b: 4, op: "+", answer: 10, story: "Six and four make ten.", visualEmoji: "🐦" },
+  { a: 10, b: 1, op: "+", answer: 11, story: "Ten seeds and one more seed make eleven seeds.", visualEmoji: "🌾" },
+  { a: 9, b: 2, op: "+", answer: 11, story: "Nine birds and two more birds make eleven birds.", visualEmoji: "🐦" },
+  { a: 8, b: 3, op: "+", answer: 11, story: "Eight plus three make eleven.", visualEmoji: "🪶" },
+  { a: 10, b: 2, op: "+", answer: 12, story: "Ten eggs and two more eggs make twelve eggs.", visualEmoji: "🥚" },
+  { a: 11, b: 1, op: "+", answer: 12, story: "Eleven feathers plus one feather make twelve feathers.", visualEmoji: "🪶" },
+  { a: 9, b: 3, op: "+", answer: 12, story: "Nine plus three make twelve.", visualEmoji: "🪽" },
+  { a: 12, b: 1, op: "+", answer: 13, story: "Twelve eggs and one more egg make thirteen eggs.", visualEmoji: "🥚" },
+  { a: 10, b: 3, op: "+", answer: 13, story: "Ten birds plus three birds make thirteen birds.", visualEmoji: "🐦" },
+  { a: 8, b: 5, op: "+", answer: 13, story: "Eight plus five make thirteen.", visualEmoji: "🪺" },
+  { a: 10, b: 4, op: "+", answer: 14, story: "Ten wings plus four wings make fourteen wings.", visualEmoji: "🪽" },
+  { a: 7, b: 7, op: "+", answer: 14, story: "Seven plus seven make fourteen.", visualEmoji: "🐦" },
+  { a: 9, b: 5, op: "+", answer: 14, story: "Nine plus five make fourteen.", visualEmoji: "🌾" },
+  { a: 10, b: 5, op: "+", answer: 15, story: "Ten nests and five more nests make fifteen nests.", visualEmoji: "🪺" },
+  { a: 12, b: 3, op: "+", answer: 15, story: "Twelve seeds plus three seeds make fifteen seeds.", visualEmoji: "🌾" },
+  { a: 11, b: 4, op: "+", answer: 15, story: "Eleven plus four make fifteen.", visualEmoji: "🥚" },
+  { a: 10, b: 6, op: "+", answer: 16, story: "Ten birds and six more birds make sixteen birds.", visualEmoji: "🐦" },
+  { a: 14, b: 2, op: "+", answer: 16, story: "Fourteen seeds plus two seeds make sixteen seeds.", visualEmoji: "🌾" },
+  { a: 12, b: 4, op: "+", answer: 16, story: "Twelve plus four make sixteen.", visualEmoji: "🪶" },
+  { a: 12, b: 5, op: "+", answer: 17, story: "Twelve eggs and five more eggs make seventeen eggs.", visualEmoji: "🥚" },
+  { a: 10, b: 7, op: "+", answer: 17, story: "Ten plus seven make seventeen.", visualEmoji: "🪽" },
+  { a: 9, b: 8, op: "+", answer: 17, story: "Nine plus eight make seventeen.", visualEmoji: "🐦" },
+  { a: 15, b: 3, op: "+", answer: 18, story: "Fifteen birds plus three birds make eighteen birds.", visualEmoji: "🐦" },
+  { a: 12, b: 6, op: "+", answer: 18, story: "Twelve feathers plus six feathers make eighteen feathers.", visualEmoji: "🪶" },
+  { a: 10, b: 8, op: "+", answer: 18, story: "Ten plus eight make eighteen.", visualEmoji: "🪺" },
+  { a: 11, b: 8, op: "+", answer: 19, story: "Eleven nests plus eight nests make nineteen nests.", visualEmoji: "🪺" },
+  { a: 14, b: 5, op: "+", answer: 19, story: "Fourteen plus five make nineteen.", visualEmoji: "🌾" },
+  { a: 10, b: 9, op: "+", answer: 19, story: "Ten plus nine make nineteen.", visualEmoji: "🥚" },
+  { a: 10, b: 10, op: "+", answer: 20, story: "Ten chirps plus ten chirps make twenty chirps.", visualEmoji: "🐤" },
+  { a: 12, b: 8, op: "+", answer: 20, story: "Twelve seeds plus eight seeds make twenty seeds.", visualEmoji: "🌾" },
+  { a: 15, b: 5, op: "+", answer: 20, story: "Fifteen plus five make twenty.", visualEmoji: "⭐" },
+  { a: 20, b: 1, op: "-", answer: 19, story: "Twenty seeds, one rolls away, nineteen are left.", visualEmoji: "🌾" },
+  { a: 18, b: 2, op: "-", answer: 16, story: "Eighteen eggs, two crack open for snack, sixteen are left.", visualEmoji: "🥚" },
+  { a: 15, b: 5, op: "-", answer: 10, story: "Fifteen birds, five fly away, ten are left.", visualEmoji: "🐦" },
+  { a: 12, b: 2, op: "-", answer: 10, story: "Twelve minus two make ten.", visualEmoji: "⭐" },
+  { a: 20, b: 5, op: "-", answer: 15, story: "Twenty seeds, five are eaten, fifteen are left.", visualEmoji: "🌾" },
+  { a: 19, b: 3, op: "-", answer: 16, story: "Nineteen minus three make sixteen.", visualEmoji: "🪶" },
+  { a: 17, b: 2, op: "-", answer: 15, story: "Seventeen feathers, two float off, fifteen are left.", visualEmoji: "🪶" },
+  { a: 16, b: 4, op: "-", answer: 12, story: "Sixteen eggs, four hatch, twelve are left.", visualEmoji: "🥚" },
+  { a: 14, b: 3, op: "-", answer: 11, story: "Fourteen minus three make eleven.", visualEmoji: "🐦" },
+  { a: 13, b: 2, op: "-", answer: 11, story: "Thirteen birds, two fly to a tree, eleven are left.", visualEmoji: "🐦" },
+  { a: 12, b: 1, op: "-", answer: 11, story: "Twelve minus one make eleven.", visualEmoji: "🪺" },
+  { a: 15, b: 3, op: "-", answer: 12, story: "Fifteen wings, three tuck in, twelve are left.", visualEmoji: "🪽" },
+  { a: 18, b: 5, op: "-", answer: 13, story: "Eighteen minus five make thirteen.", visualEmoji: "🌾" },
+  { a: 20, b: 7, op: "-", answer: 13, story: "Twenty nests, seven are empty, thirteen are left.", visualEmoji: "🪺" },
+  { a: 17, b: 4, op: "-", answer: 13, story: "Seventeen minus four make thirteen.", visualEmoji: "🥚" },
+  { a: 14, b: 2, op: "-", answer: 12, story: "Fourteen minus two make twelve.", visualEmoji: "🐤" },
+  { a: 11, b: 1, op: "-", answer: 10, story: "Eleven chirps, one stops, ten are left.", visualEmoji: "🐤" },
+  { a: 20, b: 10, op: "-", answer: 10, story: "Twenty minus ten make ten.", visualEmoji: "⭐" },
+  { a: 16, b: 6, op: "-", answer: 10, story: "Sixteen seeds, six get planted, ten are left.", visualEmoji: "🌾" },
+  { a: 19, b: 9, op: "-", answer: 10, story: "Nineteen minus nine make ten.", visualEmoji: "🐦" },
+];
+
+for (const row of FACTS_10_TO_20_RAW) {
+  facts.push(
+    mathFact({
+      a: row.a,
+      b: row.b,
+      op: row.op,
+      answer: row.answer,
+      level: levelForAnswer10to20(row.answer),
+      story: row.story,
+      visualEmoji: row.visualEmoji,
+    })
+  );
 }
 
 /** De-duplicate identical a,b,op while keeping variety */
