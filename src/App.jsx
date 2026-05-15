@@ -36,12 +36,15 @@ import { getTeacherRecommendation } from "./lib/teacherMode.js";
 import { TeacherMode as TeacherModeScreen } from "./TeacherMode.jsx";
 import {
   cancelSpeech,
+  cancelScheduledTimer,
   clearScheduledAudio,
+  clearScheduledTimers,
   scheduleAudio,
   speakLetterSound,
   speakText,
   SOUND_POP_AUTO_PLAY_MS,
-  SOUND_POP_ADVANCE_MS,
+  TTS_AFTER_PHRASE_GAP_MS,
+  TTS_FALLBACK_TOTAL_MS,
 } from "./lib/questAudio.js";
 import { applyRewardClaim, sanitizeRewardClaims } from "./lib/rewardClaims.js";
 import { syncProgression, xpForLevel, levelFromXp } from "./lib/progression.js";
@@ -315,8 +318,8 @@ const BADGES = [
   { id: "level_2_reader", name: "Level 2 Reader", emoji: "📈", description: "Reading level 2+ and 5 reading wins", test: (p) => clampLevel(p.settings?.activeReadingLevel) >= 2 && (p.totals.readingWinsAtLevel2Plus || 0) >= 5 },
 ];
 
-function speak(text, rate = 0.72) {
-  speakText(text, rate);
+function speak(text, rate = 0.72, onEnd) {
+  speakText(text, rate, onEnd);
 }
 
 const RIGHT_ANSWER_PAUSE_MS = 1000;
@@ -874,11 +877,18 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
     if (ok) {
       setResult({ type: "good", text: "Good counting!" });
       logWin("counting");
-      speak(`Yes. ${countCard.count} ${countCard.label}.`, 0.72);
-      setTimeout(() => {
+      let done = false;
+      const next = () => {
+        if (done) return;
+        done = true;
         setCountCard(pickCountCard());
         setResult(null);
-      }, 1000);
+      };
+      const safety = window.setTimeout(next, TTS_FALLBACK_TOTAL_MS);
+      speak(`Yes. ${countCard.count} ${countCard.label}.`, 0.72, () => {
+        window.clearTimeout(safety);
+        window.setTimeout(next, TTS_AFTER_PHRASE_GAP_MS);
+      });
     } else {
       setResult({ type: "try", text: "Count again" });
       speak("Good try. Count them slowly.", 0.72);
@@ -895,11 +905,18 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
       setResult({ type: "good", text: "Math helper!" });
       logWin("math");
       const praise = mathCard.missing ? `Yes. The missing number is ${mathCard.answer}.` : `Yes. The answer is ${mathCard.answer}.`;
-      speak(praise, 0.72);
-      setTimeout(() => {
+      let done = false;
+      const next = () => {
+        if (done) return;
+        done = true;
         setMathCard(pickMathCard());
         setResult(null);
-      }, 1200);
+      };
+      const safety = window.setTimeout(next, TTS_FALLBACK_TOTAL_MS);
+      speak(praise, 0.72, () => {
+        window.clearTimeout(safety);
+        window.setTimeout(next, TTS_AFTER_PHRASE_GAP_MS);
+      });
     } else {
       setResult({ type: "try", text: "Try again" });
       speak("Good try. Use your fingers if you need to.", 0.72);
@@ -1268,17 +1285,17 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-play target letter after each new challenge renders (~320ms delay).
+  // Auto-play target letter after each new challenge renders (do not cancel speech — praise may still be finishing).
   useEffect(() => {
     const token = ++roundTokenRef.current;
-    clearScheduledAudio();
+    clearScheduledTimers();
 
     scheduleAudio(() => {
       if (roundTokenRef.current !== token) return;
       speakLetterSound(targetRef.current);
     }, SOUND_POP_AUTO_PLAY_MS);
 
-    return () => clearScheduledAudio();
+    return () => clearScheduledTimers();
   }, [target.letter]);
 
   useEffect(() => () => clearScheduledAudio(), []);
@@ -1309,22 +1326,31 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
       const praise = pickRandom(ENCOURAGEMENT);
       setResult({ type: "good", text: praise });
       logWin("sounds");
-      clearScheduledAudio();
-      speakText(praise, 0.78);
-
-      scheduleAudio(() => {
-        if (roundTokenRef.current !== tokenAtAnswer) return;
+      clearScheduledTimers();
+      let advanced = false;
+      const advance = () => {
+        if (advanced || roundTokenRef.current !== tokenAtAnswer) return;
+        advanced = true;
+        clearScheduledTimers();
         loadNextChallenge();
-      }, SOUND_POP_ADVANCE_MS);
+      };
+      const safetyId = scheduleAudio(advance, TTS_FALLBACK_TOTAL_MS);
+
+      speakText(praise, 0.78, () => {
+        cancelScheduledTimer(safetyId);
+        scheduleAudio(advance, TTS_AFTER_PHRASE_GAP_MS);
+      });
     } else {
       const tokenAtWrong = roundTokenRef.current;
       setResult({ type: "try", text: "Try again" });
-      speakText("Good try. Listen again.", 0.72);
-      scheduleAudio(() => {
-        if (roundTokenRef.current !== tokenAtWrong) return;
-        speakLetterSound(targetRef.current);
-      }, 400);
-      scheduleAudio(() => setResult(null), 900);
+      clearScheduledTimers();
+      speakText("Good try. Listen again.", 0.72, () => {
+        scheduleAudio(() => {
+          if (roundTokenRef.current !== tokenAtWrong) return;
+          speakLetterSound(targetRef.current);
+        }, TTS_AFTER_PHRASE_GAP_MS);
+      });
+      scheduleAudio(() => setResult(null), 2200);
     }
   };
 
@@ -1539,12 +1565,17 @@ function ReadGame({ logWin, logAttempt, playerLevel, activeReadingLevel, reading
     const praise = pickRandom(READ_ENCOURAGEMENT);
     setResult({ type: "good", text: `${praise} +1 star!` });
     setCelebrate(true);
-    speak(praise, 0.78);
     if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
-    advanceTimerRef.current = window.setTimeout(() => {
+    const advance = () => {
+      advanceTimerRef.current = null;
       setCelebrate(false);
       goToNextSentence();
-    }, 1400);
+    };
+    advanceTimerRef.current = window.setTimeout(advance, TTS_FALLBACK_TOTAL_MS);
+    speak(praise, 0.78, () => {
+      if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = window.setTimeout(advance, TTS_AFTER_PHRASE_GAP_MS);
+    });
   };
 
   const day = normalizeDayEntry(todayStats);
