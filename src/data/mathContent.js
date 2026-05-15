@@ -1,4 +1,5 @@
 import { filterByMaxLevel } from "./levels.js";
+import { resolveDifficultyBand, filterByDifficultyBand, filterCountingByBand } from "../lib/difficulty.js";
 
 const COUNT_EMOJIS = [
   { emoji: "🍎", label: "apples" },
@@ -33,7 +34,7 @@ const COUNT_EMOJIS = [
 const BASE_COUNTING_SETS = Array.from({ length: 25 }, (_, i) => {
   const count = (i % 20) + 1;
   const pack = COUNT_EMOJIS[i % COUNT_EMOJIS.length];
-  const level = count <= 5 ? 1 : count <= 10 ? 2 : count <= 15 ? 3 : 4;
+  const level = count <= 5 ? 1 : count <= 10 ? 2 : 5;
   return {
     count,
     emoji: pack.emoji,
@@ -47,22 +48,25 @@ const BIRD_COUNTING_SETS = [
   { count: 10, emoji: "🌾", label: "seeds", level: 2 },
   { count: 11, emoji: "🪶", label: "feathers", level: 2 },
   { count: 12, emoji: "🥚", label: "eggs", level: 2 },
-  { count: 13, emoji: "🐦", label: "birds", level: 3 },
-  { count: 14, emoji: "🪽", label: "wings", level: 3 },
-  { count: 15, emoji: "🪺", label: "nests", level: 3 },
-  { count: 16, emoji: "🌾", label: "seeds", level: 3 },
-  { count: 17, emoji: "🪶", label: "feathers", level: 4 },
-  { count: 18, emoji: "🥚", label: "eggs", level: 4 },
-  { count: 19, emoji: "🐦", label: "birds", level: 4 },
-  { count: 20, emoji: "⭐", label: "stars", level: 4 },
+  { count: 13, emoji: "🐦", label: "birds", level: 5 },
+  { count: 14, emoji: "🪽", label: "wings", level: 5 },
+  { count: 15, emoji: "🪺", label: "nests", level: 5 },
+  { count: 16, emoji: "🌾", label: "seeds", level: 5 },
+  { count: 17, emoji: "🪶", label: "feathers", level: 5 },
+  { count: 18, emoji: "🥚", label: "eggs", level: 5 },
+  { count: 19, emoji: "🐦", label: "birds", level: 5 },
+  { count: 20, emoji: "⭐", label: "stars", level: 5 },
 ];
 
 export const COUNTING_SETS = [...BASE_COUNTING_SETS, ...BIRD_COUNTING_SETS];
 
 let mid = 1;
 
-function mathFact({ a, b, op, answer, level, story, visualEmoji }) {
-  return { id: `mf${mid++}`, a, b, op, answer, level, story, visualEmoji };
+function mathFact({ a, b, op, answer, level, story, visualEmoji, missing, kind }) {
+  const row = { id: `mf${mid++}`, a, b, op, answer, level, story, visualEmoji };
+  if (missing) row.missing = missing;
+  if (kind) row.kind = kind;
+  return row;
 }
 
 const facts = [];
@@ -249,10 +253,44 @@ for (const row of FACTS_10_TO_20_RAW) {
   );
 }
 
+/** Missing-number puzzles (answer = the blank), tier 5+ */
+const MISSING_NUMBER_FACTS = [
+  { a: 8, b: 5, op: "+", missing: "b", answer: 5, level: 5, story: "Eight plus something makes thirteen.", visualEmoji: "🪺" },
+  { a: 5, b: 8, op: "+", missing: "a", answer: 5, level: 5, story: "Something plus eight makes thirteen.", visualEmoji: "⭐" },
+  { a: 9, b: 4, op: "+", missing: "b", answer: 4, level: 5, story: "Nine plus something makes thirteen.", visualEmoji: "🐦" },
+  { a: 14, b: 4, op: "-", missing: "b", answer: 10, level: 5, story: "Fourteen take away something leaves ten.", visualEmoji: "🌾" },
+  { a: 12, b: 4, op: "-", missing: "b", answer: 8, level: 5, story: "Twelve minus something equals eight.", visualEmoji: "🥚" },
+  { a: 18, b: 5, op: "-", missing: "b", answer: 13, level: 5, story: "Eighteen minus something makes thirteen.", visualEmoji: "🪶" },
+  { a: 7, b: 8, op: "+", missing: "b", answer: 8, level: 5, story: "Seven plus something makes fifteen.", visualEmoji: "🐦" },
+  { a: 6, b: 9, op: "+", missing: "b", answer: 9, level: 5, story: "Six plus something makes fifteen.", visualEmoji: "🌾" },
+  { a: 11, b: 6, op: "+", missing: "b", answer: 6, level: 5, story: "Eleven plus something makes seventeen.", visualEmoji: "🪽" },
+  { a: 20, b: 7, op: "-", missing: "b", answer: 13, level: 5, story: "Twenty minus something makes thirteen.", visualEmoji: "🪺" },
+];
+
+for (const row of MISSING_NUMBER_FACTS) {
+  facts.push(mathFact(row));
+}
+
+/** Word problems and mixed ±20 stories, tier 6 */
+const WORD_PROBLEM_FACTS = [
+  { a: 7, b: 5, op: "+", answer: 12, level: 6, kind: "word_problem", story: "Sam has seven stickers. Mom gives five more. How many stickers now?", visualEmoji: "⭐" },
+  { a: 10, b: 3, op: "-", answer: 7, level: 6, kind: "word_problem", story: "Ten birds on a branch. Three fly away. How many birds are left?", visualEmoji: "🐦" },
+  { a: 8, b: 7, op: "+", answer: 15, level: 6, kind: "word_problem", story: "Eight seeds in one cup and seven in another. How many seeds altogether?", visualEmoji: "🌾" },
+  { a: 16, b: 4, op: "-", answer: 12, level: 6, kind: "word_problem", story: "Sixteen eggs in the nest. Four hatch. How many eggs are still waiting?", visualEmoji: "🥚" },
+  { a: 9, b: 9, op: "+", answer: 18, level: 6, kind: "word_problem", story: "Nine feathers on the left wing and nine on the right. How many feathers?", visualEmoji: "🪶" },
+  { a: 20, b: 8, op: "-", answer: 12, level: 6, kind: "word_problem", story: "Twenty chirps in the morning. Eight stop at nap time. How many chirps are left?", visualEmoji: "🐤" },
+  { a: 12, b: 8, op: "+", answer: 20, level: 6, kind: "word_problem", story: "Twelve seeds plus eight seeds. How many seeds for the hungry bird?", visualEmoji: "🌾" },
+  { a: 15, b: 5, op: "-", answer: 10, level: 6, kind: "word_problem", story: "Fifteen birds on the fence. Five fly to the tree. How many stay on the fence?", visualEmoji: "🐦" },
+];
+
+for (const row of WORD_PROBLEM_FACTS) {
+  facts.push(mathFact(row));
+}
+
 /** De-duplicate identical a,b,op while keeping variety */
 const seen = new Set();
 export const MATH_FACTS = facts.filter((f) => {
-  const key = `${f.a}|${f.b}|${f.op}|${f.answer}`;
+  const key = f.missing ? `${f.a}|${f.b}|${f.op}|${f.missing}|${f.answer}` : `${f.a}|${f.b}|${f.op}|${f.answer}`;
   if (seen.has(key)) return false;
   seen.add(key);
   return true;
@@ -264,4 +302,14 @@ export function countingSetsForMathLevel(activeMathLevel) {
 
 export function mathFactsForLevel(activeMathLevel) {
   return filterByMaxLevel(MATH_FACTS, activeMathLevel);
+}
+
+export function countingSetsForDifficulty(progress, sessionStats = {}) {
+  const band = resolveDifficultyBand(progress, sessionStats, "math");
+  return filterCountingByBand(COUNTING_SETS, band);
+}
+
+export function mathFactsForDifficulty(progress, sessionStats = {}) {
+  const band = resolveDifficultyBand(progress, sessionStats, "math");
+  return filterByDifficultyBand(MATH_FACTS, band);
 }

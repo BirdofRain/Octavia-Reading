@@ -1,5 +1,16 @@
 import { WORD_FAMILIES } from "./phonics.js";
 import { filterByMaxLevel } from "./levels.js";
+import { resolveDifficultyBand, filterByDifficultyBand } from "../lib/difficulty.js";
+import {
+  BIRD_PACK_WORDS,
+  BIRD_PACK_SENTENCES,
+  applyReadingTheme,
+  normalizeReadingTheme,
+  countBirdPackSentences,
+  READING_THEMES,
+} from "./birdContent.js";
+
+export { READING_THEMES, normalizeReadingTheme, applyReadingTheme, countBirdPackSentences };
 
 function parts(w) {
   return w.split("");
@@ -97,6 +108,13 @@ const WORD_EMOJI = {
   bird: "🐦",
   cage: "🦜",
   chirp: "🐤",
+  owl: "🦉",
+  chick: "🐤",
+  worm: "🪱",
+  tree: "🌳",
+  pond: "💧",
+  parrot: "🦜",
+  branch: "🌿",
 };
 
 function sentenceForFamilyWord(familyId, word) {
@@ -214,22 +232,24 @@ const extras = [
 
 /** Bird Buddies — decodable or short words for Build a Word */
 const birdBuddyWords = [
-  { word: "nest", parts: parts("nest"), family: "bird", level: 2, emoji: "🪺", sentence: "The egg is in the nest." },
-  { word: "pet", parts: parts("pet"), family: "bird", level: 2, emoji: "🐦", sentence: "A pet bird can sit." },
-  { word: "egg", parts: parts("egg"), family: "bird", level: 2, emoji: "🥚", sentence: "The egg is in the nest." },
-  { word: "seed", parts: parts("seed"), family: "bird", level: 2, emoji: "🌾", sentence: "The seed is in the cup." },
-  { word: "wing", parts: parts("wing"), family: "bird", level: 3, emoji: "🪽", sentence: "The bird has a wing." },
-  { word: "beak", parts: parts("beak"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird has a beak." },
-  { word: "bird", parts: parts("bird"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird can sit." },
-  { word: "cage", parts: parts("cage"), family: "bird", level: 3, emoji: "🦜", sentence: "The bird is in the cage." },
-  { word: "chirp", parts: parts("chirp"), family: "bird", level: 4, emoji: "🐤", sentence: "The bird can chirp." },
+  { word: "nest", parts: parts("nest"), family: "bird", level: 2, emoji: "🪺", sentence: "The egg is in the nest.", theme: "bird" },
+  { word: "pet", parts: parts("pet"), family: "bird", level: 2, emoji: "🐦", sentence: "A pet bird can sit.", theme: "bird" },
+  { word: "egg", parts: parts("egg"), family: "bird", level: 2, emoji: "🥚", sentence: "The egg is in the nest.", theme: "bird" },
+  { word: "seed", parts: parts("seed"), family: "bird", level: 2, emoji: "🌾", sentence: "The seed is in the cup.", theme: "bird" },
+  { word: "wing", parts: parts("wing"), family: "bird", level: 3, emoji: "🪽", sentence: "The bird has a wing.", theme: "bird" },
+  { word: "beak", parts: parts("beak"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird has a beak.", theme: "bird" },
+  { word: "bird", parts: parts("bird"), family: "bird", level: 3, emoji: "🐦", sentence: "The bird can sit.", theme: "bird" },
+  { word: "cage", parts: parts("cage"), family: "bird", level: 3, emoji: "🦜", sentence: "The bird is in the cage.", theme: "bird" },
+  { word: "chirp", parts: parts("chirp"), family: "bird", level: 4, emoji: "🐤", sentence: "The bird can chirp.", theme: "bird" },
 ];
 
-export const WORDS = [...fromFamilies, ...extras, ...birdBuddyWords];
+export const WORDS = [...fromFamilies, ...extras, ...birdBuddyWords, ...BIRD_PACK_WORDS];
 
 let sid = 1;
-function S(text, focusWords, level, type, helperPrompt) {
-  return { id: `sb${sid++}`, text, focusWords, level, type, helperPrompt };
+function S(text, focusWords, level, type, helperPrompt, theme) {
+  const row = { id: `sb${sid++}`, text, focusWords, level, type, helperPrompt };
+  if (theme) row.theme = theme;
+  return row;
 }
 
 /** @type {Array<{id:string,text:string,focusWords:string[],level:number,type:'decodable'|'sight-word-supported',helperPrompt:string}>} */
@@ -393,11 +413,51 @@ export const SENTENCE_BANK = [
   S("The bird hops on the rug.", ["bird", "hops", "rug"], 3, "sight-word-supported", "Look for the word bird."),
   S("Mom fills the cup with seeds.", ["Mom", "seeds", "cup"], 4, "sight-word-supported", "Tap seeds slowly."),
   S("The blue bird has seeds.", ["blue", "bird", "seeds"], 3, "sight-word-supported", "Find the bird word first."),
+  S("The red bird can hop.", ["red", "bird", "hop"], 5, "sight-word-supported", "Find bird first, then hop."),
+  S("Mom saw the big fat cat.", ["Mom", "big", "fat", "cat"], 5, "sight-word-supported", "Big and fat describe the cat."),
+  S("The bird rests on the soft rug.", ["bird", "rests", "soft", "rug"], 5, "sight-word-supported", "Rests means taking a break."),
+  S("Ten seeds sit in the cup.", ["seeds", "cup", "Ten"], 5, "sight-word-supported", "Ten is a number word."),
+  S("The green bird can flap both wings.", ["green", "bird", "wings", "flap"], 5, "sight-word-supported", "Flap means move wings."),
+  S("Dad fills the cup with fresh seeds.", ["Dad", "seeds", "cup", "fresh"], 5, "sight-word-supported", "Fresh means new and good."),
+  S("The pet bird chirps on the perch.", ["pet", "bird", "chirps", "perch"], 5, "sight-word-supported", "Chirps is the bird sound."),
+  S("A tiny egg waits in the soft nest.", ["egg", "nest", "tiny", "soft"], 5, "sight-word-supported", "Tiny means very small."),
+  S("The yellow bird hops on the mat.", ["yellow", "bird", "hops", "mat"], 5, "sight-word-supported", "Yellow is a color word."),
+  S("The red bird can hop. The red bird rests on the mat.", ["red", "bird", "hop", "rests", "mat"], 6, "mini_story", "Read each sentence slowly."),
+  S("Mom sees the bird. The bird chirps and hops.", ["Mom", "bird", "chirps", "hops"], 6, "mini_story", "Two short sentences."),
+  S("The egg is in the nest. The bird sits on the perch.", ["egg", "nest", "bird", "perch"], 6, "mini_story", "Picture egg, nest, perch."),
+  S("Ten seeds are in the cup. The bird pecks a seed.", ["seeds", "cup", "bird", "pecks"], 6, "mini_story", "Pecks means bird bites food."),
+  S("The blue bird is soft. The blue bird flaps both wings.", ["blue", "bird", "soft", "wings", "flaps"], 6, "mini_story", "Same bird, two ideas."),
+  S("Dad feeds the bird. The bird rests on the rug.", ["Dad", "feeds", "bird", "rests", "rug"], 6, "mini_story", "Feed then rest."),
+  ...BIRD_PACK_SENTENCES,
 ];
 
 /** For tests: sentences mentioning bird theme keywords */
 export function countBirdBuddySentences() {
-  const keys = ["bird", "birds", "nest", "egg", "eggs", "seed", "seeds", "wing", "wings", "beak", "perch", "cage", "chirp", "chirps", "feather", "feathers", "flap"];
+  const keys = [
+    "bird",
+    "birds",
+    "nest",
+    "egg",
+    "eggs",
+    "seed",
+    "seeds",
+    "wing",
+    "wings",
+    "beak",
+    "perch",
+    "cage",
+    "chirp",
+    "chirps",
+    "feather",
+    "feathers",
+    "flap",
+    "owl",
+    "parrot",
+    "chick",
+    "worm",
+    "branch",
+    "pond",
+  ];
   return SENTENCE_BANK.filter((s) => keys.some((k) => s.text.toLowerCase().includes(k))).length;
 }
 
@@ -412,4 +472,46 @@ export function wordsForReadingLevel(activeReadingLevel) {
 
 export function sentencesForReadingLevel(activeReadingLevel) {
   return filterByMaxLevel(SENTENCE_BANK, activeReadingLevel);
+}
+
+function readingThemeFromProgress(progress) {
+  return normalizeReadingTheme(progress?.settings?.readingTheme);
+}
+
+export function wordsForReadingDifficulty(progress, sessionStats = {}) {
+  const band = resolveDifficultyBand(progress, sessionStats, "reading");
+  const filtered = filterByDifficultyBand(WORDS, band);
+  return applyReadingTheme(filtered, readingThemeFromProgress(progress));
+}
+
+export function sentencesForReadingDifficulty(progress, sessionStats = {}) {
+  const band = resolveDifficultyBand(progress, sessionStats, "reading");
+  const filtered = filterByDifficultyBand(SENTENCE_BANK, band);
+  return applyReadingTheme(filtered, readingThemeFromProgress(progress));
+}
+
+/**
+ * Read It pool: player level 5+ favors longer sentences; level 8+ favors mini stories.
+ */
+export function sentencesForReadGame(progress, sessionStats = {}) {
+  let pool = sentencesForReadingDifficulty(progress, sessionStats);
+  const playerLevel = Math.max(1, Number(progress?.level) || 1);
+
+  if (playerLevel >= 5) {
+    const harder = pool.filter((s) => (s.level || 1) >= 5);
+    const easier = pool.filter((s) => (s.level || 1) < 5);
+    if (harder.length >= 6) {
+      pool = [...harder, ...harder, ...easier];
+    }
+  }
+
+  if (playerLevel >= 8) {
+    const mini = pool.filter((s) => s.type === "mini_story");
+    const other = pool.filter((s) => s.type !== "mini_story");
+    if (mini.length > 0) {
+      pool = [...mini, ...mini, ...other];
+    }
+  }
+
+  return pool;
 }

@@ -1,5 +1,8 @@
 import { supabase, supabaseConfigured } from "./supabaseClient";
+import { sanitizeRewardClaims } from "./rewardClaims.js";
+import { reconcileProgress, touchProgressUpdatedAt } from "./progressSync.js";
 
+export { reconcileProgress, touchProgressUpdatedAt } from "./progressSync.js";
 export { supabase, supabaseConfigured } from "./supabaseClient";
 
 export async function getCurrentUser() {
@@ -21,19 +24,37 @@ export async function signOut() {
   return supabase.auth.signOut();
 }
 
+/**
+ * @returns {Promise<{ progress: object, serverUpdatedAt?: string }|null>}
+ */
 export async function loadCloudProgress() {
   if (!supabaseConfigured) return null;
   const user = await getCurrentUser();
   if (!user) return null;
 
-  const { data, error } = await supabase
+  let data;
+  let error;
+  ({ data, error } = await supabase
     .from("reading_progress")
-    .select("progress")
+    .select("progress, updated_at")
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle());
+
+  if (error?.code === "42703" || /updated_at/i.test(error?.message || "")) {
+    ({ data, error } = await supabase
+      .from("reading_progress")
+      .select("progress")
+      .eq("user_id", user.id)
+      .maybeSingle());
+  }
 
   if (error) throw error;
-  return data?.progress ?? null;
+  if (!data?.progress) return null;
+
+  return {
+    progress: data.progress,
+    serverUpdatedAt: data.updated_at ?? undefined,
+  };
 }
 
 export async function saveCloudProgress(progress) {
@@ -41,79 +62,37 @@ export async function saveCloudProgress(progress) {
   const user = await getCurrentUser();
   if (!user) return { skipped: true, reason: "not_signed_in" };
 
+  const stamped = touchProgressUpdatedAt(progress);
+
   const { error } = await supabase
     .from("reading_progress")
     .upsert(
       {
         user_id: user.id,
-        child_name: progress?.childName || "Octavia",
-        progress,
+        child_name: stamped?.childName || "Octavia",
+        progress: stamped,
       },
       { onConflict: "user_id" }
     );
 
   if (error) throw error;
-  return { saved: true };
+  return { saved: true, progress: stamped };
 }
 
-export function mergeProgress(localProgress, cloudProgress) {
-  if (!cloudProgress) return localProgress;
-  if (!localProgress) return cloudProgress;
-
-  const localFamilies = Array.isArray(localProgress.totals?.wordFamiliesUsed) ? localProgress.totals.wordFamiliesUsed : [];
-  const cloudFamilies = Array.isArray(cloudProgress.totals?.wordFamiliesUsed) ? cloudProgress.totals.wordFamiliesUsed : [];
-  const mergedFamilies = Array.from(new Set([...localFamilies, ...cloudFamilies])).slice(0, 40);
-
-  return {
-    ...localProgress,
-    ...cloudProgress,
-    stars: Math.max(localProgress.stars || 0, cloudProgress.stars || 0),
-    lifetimeStars: Math.max(localProgress.lifetimeStars || 0, cloudProgress.lifetimeStars || 0),
-    correct: Math.max(localProgress.correct || 0, cloudProgress.correct || 0),
-    attempts: Math.max(localProgress.attempts || 0, cloudProgress.attempts || 0),
-    badges: Array.from(new Set([...(localProgress.badges || []), ...(cloudProgress.badges || [])])),
-    rewardClaims: [...(cloudProgress.rewardClaims || []), ...(localProgress.rewardClaims || [])].slice(0, 50),
-    settings: {
-      activeReadingLevel: Math.max(
-        Number(localProgress.settings?.activeReadingLevel) || 1,
-        Number(cloudProgress.settings?.activeReadingLevel) || 1
-      ),
-      activeMathLevel: Math.max(
-        Number(localProgress.settings?.activeMathLevel) || 1,
-        Number(cloudProgress.settings?.activeMathLevel) || 1
-      ),
-    },
-    totals: {
-      ...(localProgress.totals || {}),
-      ...(cloudProgress.totals || {}),
-      soundsCorrect: Math.max(localProgress.totals?.soundsCorrect || 0, cloudProgress.totals?.soundsCorrect || 0),
-      wordsBuilt: Math.max(localProgress.totals?.wordsBuilt || 0, cloudProgress.totals?.wordsBuilt || 0),
-      sentencesRead: Math.max(localProgress.totals?.sentencesRead || 0, cloudProgress.totals?.sentencesRead || 0),
-      countingCorrect: Math.max(localProgress.totals?.countingCorrect || 0, cloudProgress.totals?.countingCorrect || 0),
-      mathCorrect: Math.max(localProgress.totals?.mathCorrect || 0, cloudProgress.totals?.mathCorrect || 0),
-      parentMinutes: Math.max(localProgress.totals?.parentMinutes || 0, cloudProgress.totals?.parentMinutes || 0),
-      readingWinsAtLevel2Plus: Math.max(
-        localProgress.totals?.readingWinsAtLevel2Plus || 0,
-        cloudProgress.totals?.readingWinsAtLevel2Plus || 0
-      ),
-      wordFamiliesUsed: mergedFamilies,
-    },
-    dailyLog: {
-      ...(cloudProgress.dailyLog || {}),
-      ...(localProgress.dailyLog || {}),
-    },
-  };
+/** @deprecated Use reconcileProgress — kept for existing imports/tests. */
+export function mergeProgress(localProgress, cloudProgress, serverUpdatedAt) {
+  return reconcileProgress(localProgress, cloudProgress, serverUpdatedAt);
 }
 
 /** Console-only checks for merge + offline behavior (runs once per tab). */
 export function runCloudSyncSelfTests() {
   const hiLocal = { lifetimeStars: 3, badges: ["a", "b"] };
   const hiCloud = { lifetimeStars: 11, badges: ["b", "c"] };
-  const mergedStars = mergeProgress(hiLocal, hiCloud);
-  console.assert(mergedStars.lifetimeStars === 11, "mergeProgress keeps highest lifetimeStars");
+  const mergedStars = reconcileProgress(hiLocal, hiCloud);
+  console.assert(mergedStars.lifetimeStars === 11, "reconcileProgress keeps highest lifetimeStars");
 
-  const badgeMerged = mergeProgress({ badges: ["x"] }, { badges: ["x", "y"] });
-  console.assert(badgeMerged.badges.length === 2 && new Set(badgeMerged.badges).size === 2, "mergeProgress combines badges uniquely");
+  const badgeMerged = reconcileProgress({ badges: ["x"] }, { badges: ["x", "y"] });
+  console.assert(badgeMerged.badges.length === 2 && new Set(badgeMerged.badges).size === 2, "reconcileProgress combines badges uniquely");
 
   console.assert(typeof supabase?.auth?.signOut === "function", "app loads without Supabase env vars (client exists)");
   console.assert(typeof supabaseConfigured === "boolean", "supabaseConfigured is defined");
@@ -121,4 +100,22 @@ export function runCloudSyncSelfTests() {
   void saveCloudProgress({ childName: "Test" }).then((r) => {
     console.assert(r?.skipped === true, "saveCloudProgress skips when not signed in");
   });
+
+  const duped = sanitizeRewardClaims([
+    { id: "story", title: "Pick bedtime story", cost: 5, claimedAt: "2026-01-01T12:00:00.000Z" },
+    { id: "story", title: "Pick bedtime story", cost: 5, claimedAt: "2026-01-01T12:00:00.000Z" },
+  ]);
+  console.assert(duped.length === 1, "sanitizeRewardClaims removes exact duplicate claims");
+
+  const mergedProg = reconcileProgress({ lifetimeStars: 5, correct: 5 }, { lifetimeStars: 20, correct: 18 });
+  console.assert(mergedProg.xp >= 20 && mergedProg.level >= 2, "reconcileProgress should sync progression from max XP sources");
+
+  const cloudNewer = reconcileProgress(
+    { updatedAt: "2026-01-01T10:00:00.000Z", dailyLog: { "2026-05-15": { sentencesRead: 0, lastPlayedAt: "2026-01-01T10:00:00.000Z" } } },
+    { updatedAt: "2026-05-15T18:00:00.000Z", dailyLog: { "2026-05-15": { sentencesRead: 4, lastPlayedAt: "2026-05-15T18:00:00.000Z" } } }
+  );
+  console.assert(
+    cloudNewer.dailyLog["2026-05-15"].sentencesRead === 4,
+    "when cloud is newer, today's log should not be overwritten by stale local"
+  );
 }

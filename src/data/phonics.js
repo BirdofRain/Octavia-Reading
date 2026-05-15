@@ -1,3 +1,5 @@
+import { resolveDifficultyBand, filterByDifficultyBand } from "../lib/difficulty.js";
+
 /**
  * Letter sounds: short vowels, simple consonants.
  * `say` is TTS-friendly (no IPA symbols).
@@ -35,3 +37,8 @@ export const WORD_FAMILIES = [
   { id: "ed", label: "-ed", vowel: "e", level: 3, words: ["bed", "red", "fed"] },
   { id: "en", label: "-en", vowel: "e", level: 3, words: ["hen", "pen", "men"] },
 ];
+
+export function lettersForReadingDifficulty(progress, sessionStats = {}) {
+  const band = resolveDifficultyBand(progress, sessionStats, "phonics");
+  return filterByDifficultyBand(LETTERS, band);
+}
