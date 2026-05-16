@@ -51,6 +51,7 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
     { emoji: "✅", label: "Correct today", value: today.correct },
     { emoji: "🔊", label: "Sounds correct", value: today.soundsCorrect },
     { emoji: "🧱", label: "Words built", value: today.wordsBuilt },
+    ...(today.helpedWordsBuilt > 0 ? [{ emoji: "🤝", label: "Words with help", value: today.helpedWordsBuilt }] : []),
     { emoji: "📖", label: "Sentences read", value: today.sentencesRead },
     { emoji: "🔢", label: "Math correct", value: today.mathCorrect },
   ];

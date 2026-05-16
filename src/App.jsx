@@ -163,6 +163,15 @@ const ENCOURAGEMENT = [
   "That was brave reading!",
 ];
 
+const BUILD_WORD_ENCOURAGEMENT = [
+  "You built it!",
+  "Super word!",
+  "That is how readers do it!",
+  "You figured it out!",
+  "Awesome building!",
+  "Nice word work!",
+];
+
 const REWARDS = [
   { id: "story", cost: 5, title: "Pick bedtime story", emoji: "📚", childText: "Story Pick" },
   { id: "snack", cost: 8, title: "Choose a special snack", emoji: "🍓", childText: "Snack Choice" },
@@ -184,6 +193,7 @@ function emptyDay() {
     stars: 0,
     soundsCorrect: 0,
     wordsBuilt: 0,
+    helpedWordsBuilt: 0,
     sentencesRead: 0,
     countingCorrect: 0,
     mathCorrect: 0,
@@ -205,6 +215,7 @@ function normalizeDayEntry(day) {
     stars: Number(day.stars) || 0,
     soundsCorrect: Number(day.soundsCorrect) || 0,
     wordsBuilt: Number(day.wordsBuilt) || 0,
+    helpedWordsBuilt: Number(day.helpedWordsBuilt) || 0,
     sentencesRead: Number(day.sentencesRead) || 0,
     countingCorrect: Number(day.countingCorrect) || 0,
     mathCorrect: Number(day.mathCorrect) || 0,
@@ -261,6 +272,7 @@ function defaultProgress() {
     totals: {
       soundsCorrect: 0,
       wordsBuilt: 0,
+      helpedWordsBuilt: 0,
       sentencesRead: 0,
       countingCorrect: 0,
       mathCorrect: 0,
@@ -324,6 +336,36 @@ function speak(text, rate = 0.72, onEnd) {
 
 const RIGHT_ANSWER_PAUSE_MS = 1000;
 
+const BUILD_ROUND_INTRO_MS = 480;
+const BUILD_PHONICS_GAP_MS = 240;
+const BUILD_GIVE_UP_LETTER_MS = 480;
+
+function speakWholeWord(wordObj) {
+  if (!wordObj?.word) return;
+  speakText(wordObj.word, 0.72);
+}
+
+/** Speak each letter's phonics `.say` in sequence (for Need Help / Give Up). */
+function speakPhonicsForParts(parts, tokenAtStart, roundTokenRef, onComplete) {
+  let i = 0;
+  const arr = [...parts];
+  const next = () => {
+    if (roundTokenRef.current !== tokenAtStart) return;
+    if (i >= arr.length) {
+      if (typeof onComplete === "function") onComplete();
+      return;
+    }
+    const ch = arr[i];
+    const lo = LETTERS.find((l) => l.letter === ch);
+    speakText(lo?.say || ch, 0.58, () => {
+      if (roundTokenRef.current !== tokenAtStart) return;
+      i += 1;
+      scheduleAudio(next, BUILD_PHONICS_GAP_MS);
+    });
+  };
+  next();
+}
+
 function speakSound(letterObj) {
   speakLetterSound(letterObj);
 }
@@ -366,6 +408,7 @@ function migrateProgress(raw) {
       ...(safeRaw.totals || {}),
       soundsCorrect: Number(safeRaw.totals?.soundsCorrect) || 0,
       wordsBuilt: Number(safeRaw.totals?.wordsBuilt) || 0,
+      helpedWordsBuilt: Number(safeRaw.totals?.helpedWordsBuilt) || 0,
       sentencesRead: Number(safeRaw.totals?.sentencesRead) || 0,
       countingCorrect: Number(safeRaw.totals?.countingCorrect) || 0,
       mathCorrect: Number(safeRaw.totals?.mathCorrect) || 0,
@@ -441,6 +484,7 @@ function runSelfTests() {
   console.assert(countBirdPackSentences() >= 25, "bird pack should add many themed sentences");
   const dayNorm = normalizeDayEntry({ correct: 2 });
   console.assert(dayNorm.sentencesRead === 0, "normalizeDayEntry should default sentencesRead to 0");
+  console.assert(normalizeDayEntry({}).helpedWordsBuilt === 0, "normalizeDayEntry should default helpedWordsBuilt to 0");
   const afterRead = { ...dayNorm, sentencesRead: dayNorm.sentencesRead + 1 };
   console.assert(afterRead.sentencesRead === 1, "sentencesRead increment should stay numeric");
   console.assert(sentencesForReadGame({ level: 8, settings: { activeReadingLevel: 4, readingTheme: "bird" } }).some((s) => s.type === "mini_story"), "level 8 read pool should include mini stories");
@@ -623,6 +667,9 @@ function TodayStatsDashboard({ today }) {
     { emoji: "🔢", label: "Math correct", value: day.mathCorrect },
     { emoji: "🔊", label: "Sounds correct", value: day.soundsCorrect },
   ];
+  if (day.helpedWordsBuilt > 0) {
+    items.splice(2, 0, { emoji: "🤝", label: "Words with help", value: day.helpedWordsBuilt });
+  }
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {items.map((item) => (
@@ -1395,6 +1442,7 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
 
 function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme }) {
   const sessionRef = useRef(createGameSession());
+  const roundTokenRef = useRef(0);
   const [sessionTick, setSessionTick] = useState(0);
   const progressSlice = useMemo(
     () => ({ level: playerLevel, settings: { activeReadingLevel, readingTheme } }),
@@ -1412,10 +1460,31 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
   const [target, setTarget] = useState(() => pickRandom(wordPool));
   const [built, setBuilt] = useState([]);
   const [result, setResult] = useState(null);
+  const [showClue, setShowClue] = useState(false);
+  const [giveUpRunning, setGiveUpRunning] = useState(false);
 
   useEffect(() => {
     setTarget((t) => (wordPool.some((w) => w.word === t.word) ? t : pickRandom(wordPool)));
   }, [wordPool]);
+
+  useEffect(() => {
+    const token = ++roundTokenRef.current;
+    clearScheduledTimers();
+    cancelSpeech();
+    setShowClue(false);
+    setGiveUpRunning(false);
+    setBuilt([]);
+    setResult(null);
+
+    scheduleAudio(() => {
+      if (roundTokenRef.current !== token) return;
+      speakWholeWord(target);
+    }, BUILD_ROUND_INTRO_MS);
+
+    return () => clearScheduledTimers();
+  }, [target.word]);
+
+  useEffect(() => () => clearScheduledTimers(), []);
 
   const familyLabel = useMemo(() => {
     if (!target.family) return null;
@@ -1437,32 +1506,109 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
   }, [target, letterPool]);
 
   const nextIndex = built.length;
+  const roundComplete = built.length >= target.parts.length;
+  const letterGridDisabled = giveUpRunning || roundComplete;
 
   const nextRound = () => {
+    clearScheduledTimers();
+    cancelSpeech();
     setTarget(pickWord());
-    setBuilt([]);
-    setResult(null);
+  };
+
+  const hearWordAgain = () => {
+    if (giveUpRunning || roundComplete) return;
+    const tokenAt = roundTokenRef.current;
+    clearScheduledTimers();
+    cancelSpeech();
+    scheduleAudio(() => {
+      if (roundTokenRef.current !== tokenAt) return;
+      speakWholeWord(target);
+    }, 120);
+  };
+
+  const runNeedHelp = () => {
+    if (giveUpRunning || roundComplete) return;
+    const tokenAt = roundTokenRef.current;
+    clearScheduledTimers();
+    cancelSpeech();
+    setShowClue(true);
+    scheduleAudio(() => {
+      if (roundTokenRef.current !== tokenAt) return;
+      speakPhonicsForParts(target.parts, tokenAt, roundTokenRef, undefined);
+    }, 400);
+  };
+
+  const runGiveUp = () => {
+    if (giveUpRunning || roundComplete) return;
+    const tokenAt = roundTokenRef.current;
+    clearScheduledTimers();
+    cancelSpeech();
+    recordSession(false);
+    setGiveUpRunning(true);
+    setShowClue(true);
+
+    let step = built.length;
+    const parts = target.parts;
+
+    const stepNext = () => {
+      if (roundTokenRef.current !== tokenAt) {
+        setGiveUpRunning(false);
+        return;
+      }
+      if (step >= parts.length) {
+        setGiveUpRunning(false);
+        const praise = "We built it together.";
+        setResult({ type: "good", text: praise });
+        logWin("build", { family: target.family, buildOutcome: "giveup" });
+        scheduleAudio(() => {
+          if (roundTokenRef.current !== tokenAt) return;
+          speakText("Nice try. You kept going. Next time you might get it on your own!", 0.76);
+        }, TTS_AFTER_PHRASE_GAP_MS);
+        return;
+      }
+      const ch = parts[step];
+      const lo = LETTERS.find((l) => l.letter === ch);
+      speakText(lo?.say || ch, 0.58, () => {
+        if (roundTokenRef.current !== tokenAt) {
+          setGiveUpRunning(false);
+          return;
+        }
+        setBuilt(parts.slice(0, step + 1));
+        step += 1;
+        scheduleAudio(stepNext, BUILD_GIVE_UP_LETTER_MS);
+      });
+    };
+
+    scheduleAudio(stepNext, 280);
   };
 
   const choose = (letter) => {
-    if (built.length >= target.parts.length) return;
-    logAttempt("build");
+    if (letterGridDisabled) return;
+    logAttempt();
     const expected = target.parts[nextIndex];
     if (letter === expected) {
       const newBuilt = [...built, letter];
       setBuilt(newBuilt);
-      speakSound(LETTERS.find((l) => l.letter === letter));
       if (newBuilt.length === target.parts.length) {
         recordSession(true);
-        setResult({ type: "good", text: "You built it!" });
+        const praise = pickRandom(BUILD_WORD_ENCOURAGEMENT);
+        setResult({ type: "good", text: praise });
         logWin("build", { family: target.family });
-        setTimeout(() => speakWordSlow(target), 150);
+        const tokenAt = roundTokenRef.current;
+        const safetyId = scheduleAudio(() => {
+          speakText(target.word, 0.72);
+        }, TTS_FALLBACK_TOTAL_MS);
+        speakText(praise, 0.78, () => {
+          if (roundTokenRef.current !== tokenAt) return;
+          cancelScheduledTimer(safetyId);
+          speakText(target.word, 0.72);
+        });
       }
     } else {
       recordSession(false);
-      setResult({ type: "try", text: "Not that one yet" });
-      speak(`Try the next sound: ${expected}`);
-      setTimeout(() => setResult(null), 900);
+      setResult({ type: "try", text: "Try another letter" });
+      speakText("Not quite. Try a different letter.", 0.72);
+      scheduleAudio(() => setResult(null), 1400);
     }
   };
 
@@ -1472,29 +1618,65 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
       <div className="rounded-[2rem] border-2 border-slate-900 bg-lime-100 p-5 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
         <p className="text-lg font-black text-slate-600">Build a Word</p>
         {familyLabel && <p className="mt-1 text-sm font-bold text-slate-500">Word family {familyLabel}</p>}
-        <div className="mt-1 text-6xl">{target.emoji}</div>
-        <h2 className="mt-2 text-3xl font-black">Tap the letters in order</h2>
+        <h2 className="mt-3 text-3xl font-black">Tap the letters in order</h2>
         <div className="mt-5 flex justify-center gap-3">
           {target.parts.map((part, i) => (
-            <div key={i} className={`grid h-20 w-20 place-items-center rounded-3xl border-2 border-slate-900 text-5xl font-black uppercase shadow-inner ${built[i] ? "rq-bounce bg-white" : "bg-lime-50"}`}>
+            <div
+              key={i}
+              className={`grid h-20 w-20 place-items-center rounded-3xl border-2 border-slate-900 text-5xl font-black uppercase shadow-inner ${built[i] ? "rq-bounce bg-white" : "bg-lime-50"}`}
+            >
               {built[i] || "_"}
             </div>
           ))}
         </div>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <button onClick={() => speakWordSlow(target)} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
-            <VolumeIcon className="mr-2 text-xl" /> Blend it
-          </button>
-          {built.length === target.parts.length && (
-            <button onClick={nextRound} className="rq-button rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]">
-              Next word
-            </button>
+        <div className="mt-4 min-h-[5rem] rounded-2xl border-2 border-dashed border-slate-300 bg-lime-50/80 px-3 py-3">
+          {showClue ? (
+            <p className="text-6xl" aria-hidden>
+              {target.emoji}
+            </p>
+          ) : (
+            <p className="text-base font-bold text-slate-600">Picture clue is hidden — build the word by listening and tapping letters.</p>
           )}
         </div>
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          <button
+            type="button"
+            onClick={hearWordAgain}
+            disabled={letterGridDisabled}
+            className="rq-button rounded-full border-2 border-slate-900 bg-white px-4 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
+          >
+            <VolumeIcon className="mr-2 text-xl" /> Hear Word Again
+          </button>
+          <button
+            type="button"
+            onClick={runNeedHelp}
+            disabled={letterGridDisabled}
+            className="rq-button rounded-full border-2 border-slate-900 bg-sky-100 px-4 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
+          >
+            Need Help
+          </button>
+          <button
+            type="button"
+            onClick={runGiveUp}
+            disabled={letterGridDisabled}
+            className="rq-button rounded-full border-2 border-slate-900 bg-amber-100 px-4 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
+          >
+            I Give Up
+          </button>
+        </div>
+        {roundComplete && (
+          <button
+            type="button"
+            onClick={nextRound}
+            className="rq-button mt-4 rounded-full border-2 border-slate-900 bg-white px-6 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
+          >
+            Next word
+          </button>
+        )}
       </div>
       <div className="mt-6 grid grid-cols-3 gap-4 sm:grid-cols-6">
         {choices.map((letter) => (
-          <BigButton key={letter} onClick={() => choose(letter)} className="bg-white">
+          <BigButton key={letter} onClick={() => choose(letter)} disabled={letterGridDisabled} className="bg-white disabled:opacity-50">
             <span className="text-6xl uppercase">{letter}</span>
           </BigButton>
         ))}
@@ -1837,6 +2019,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
             ...log,
             soundsCorrect: 0,
             wordsBuilt: 0,
+            helpedWordsBuilt: 0,
             sentencesRead: 0,
           },
         ])
@@ -1858,6 +2041,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
           ...old.totals,
           soundsCorrect: 0,
           wordsBuilt: 0,
+          helpedWordsBuilt: 0,
           sentencesRead: 0,
           wordFamiliesUsed: [],
           readingWinsAtLevel2Plus: 0,
@@ -1907,6 +2091,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
           stars: 0,
           soundsCorrect: 0,
           wordsBuilt: 0,
+          helpedWordsBuilt: 0,
           sentencesRead: 0,
           countingCorrect: 0,
           mathCorrect: 0,
@@ -2501,32 +2686,39 @@ export default function App() {
     updateProgress((old) => {
       const day = normalizeDayEntry(old.dailyLog[TODAY_KEY]);
       const totals = old.totals || {};
+      const isBuildGiveUp = kind === "build" && meta.buildOutcome === "giveup";
+      const wordsBuiltAdd = kind === "build" && !isBuildGiveUp ? 1 : 0;
+      const helpedWordsAdd = kind === "build" && isBuildGiveUp ? 1 : 0;
+      const starAdd = isBuildGiveUp ? 0 : 1;
+      const correctAdd = isBuildGiveUp ? 0 : 1;
       const add = {
         soundsCorrect: kind === "sounds" ? 1 : 0,
-        wordsBuilt: kind === "build" ? 1 : 0,
+        wordsBuilt: wordsBuiltAdd,
+        helpedWordsBuilt: helpedWordsAdd,
         sentencesRead: kind === "read" ? 1 : 0,
         countingCorrect: kind === "counting" ? 1 : 0,
         mathCorrect: kind === "math" ? 1 : 0,
       };
       const levelR = clampLevel(old.settings?.activeReadingLevel);
-      const readingWin = ["sounds", "build", "read"].includes(kind) && levelR >= 2;
+      const readingWin = ["sounds", "build", "read"].includes(kind) && levelR >= 2 && !(kind === "build" && isBuildGiveUp);
       let wordFamiliesUsed = Array.isArray(totals.wordFamiliesUsed) ? [...totals.wordFamiliesUsed] : [];
       if (kind === "build" && meta.family && typeof meta.family === "string" && !wordFamiliesUsed.includes(meta.family)) {
         wordFamiliesUsed = [...wordFamiliesUsed, meta.family];
       }
       return {
         ...old,
-        stars: (Number(old.stars) || 0) + 1,
-        lifetimeStars: (Number(old.lifetimeStars) || 0) + 1,
-        correct: (Number(old.correct) || 0) + 1,
+        stars: (Number(old.stars) || 0) + starAdd,
+        lifetimeStars: (Number(old.lifetimeStars) || 0) + starAdd,
+        correct: (Number(old.correct) || 0) + correctAdd,
         dailyLog: {
           ...old.dailyLog,
           [TODAY_KEY]: {
             ...day,
-            correct: day.correct + 1,
-            stars: day.stars + 1,
+            correct: day.correct + correctAdd,
+            stars: day.stars + starAdd,
             soundsCorrect: day.soundsCorrect + add.soundsCorrect,
             wordsBuilt: day.wordsBuilt + add.wordsBuilt,
+            helpedWordsBuilt: (Number(day.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
             sentencesRead: day.sentencesRead + add.sentencesRead,
             countingCorrect: day.countingCorrect + add.countingCorrect,
             mathCorrect: day.mathCorrect + add.mathCorrect,
@@ -2537,6 +2729,7 @@ export default function App() {
           ...totals,
           soundsCorrect: (Number(totals.soundsCorrect) || 0) + add.soundsCorrect,
           wordsBuilt: (Number(totals.wordsBuilt) || 0) + add.wordsBuilt,
+          helpedWordsBuilt: (Number(totals.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
           sentencesRead: (Number(totals.sentencesRead) || 0) + add.sentencesRead,
           countingCorrect: (Number(totals.countingCorrect) || 0) + add.countingCorrect,
           mathCorrect: (Number(totals.mathCorrect) || 0) + add.mathCorrect,
