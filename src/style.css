@@ -20,22 +20,22 @@ body {
 .maze-grid {
   display: inline-grid;
   gap: 2px;
-  width: min(100%, 52rem);
+  width: min(100%, 100%);
   max-width: 100%;
 }
 
 .maze-grid.maze-cell-starter > div {
-  width: clamp(1.65rem, 4.2vw, 2.75rem);
-  height: clamp(1.65rem, 4.2vw, 2.75rem);
+  width: clamp(1.5rem, 3.8vw, 2.5rem);
+  height: clamp(1.5rem, 3.8vw, 2.5rem);
 }
 
 .maze-grid.maze-cell-explorer > div {
-  width: clamp(1.15rem, 2.65vw, 2rem);
-  height: clamp(1.15rem, 2.65vw, 2rem);
+  width: clamp(1rem, 2.35vw, 1.75rem);
+  height: clamp(1rem, 2.35vw, 1.75rem);
 }
 
 .maze-grid.maze-cell-champion > div {
-  width: clamp(0.95rem, 2.1vw, 1.65rem);
-  height: clamp(0.95rem, 2.1vw, 1.65rem);
+  width: clamp(0.85rem, 1.85vw, 1.45rem);
+  height: clamp(0.85rem, 1.85vw, 1.45rem);
 }
 

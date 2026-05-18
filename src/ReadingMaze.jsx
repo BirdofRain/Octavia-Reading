@@ -46,7 +46,7 @@ function BranchingMazeGrid({ layout, birdCell, cellSizeClass }) {
           let content = "";
 
           if (type === "wall") {
-            cellClass += "bg-slate-800";
+            cellClass += "bg-slate-900";
           } else if (type === "checkpoint") {
             cellClass += "bg-orange-400 text-white";
             content = isBird ? "🐦" : "?";
