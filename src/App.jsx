@@ -34,6 +34,14 @@ import { filterByMaxLevel } from "./data/levels.js";
 import { createGameSession, formatMathEquation, resolveDifficultyBand } from "./lib/difficulty.js";
 import { getTeacherRecommendation } from "./lib/teacherMode.js";
 import { TeacherMode as TeacherModeScreen } from "./TeacherMode.jsx";
+import { ReadingMaze } from "./ReadingMaze.jsx";
+import {
+  getGameUnlockState,
+  isModeUnlocked,
+  listBonusGames,
+  listCoreGames,
+  listUnlockableGames,
+} from "./lib/unlocks.js";
 import {
   cancelSpeech,
   cancelScheduledTimer,
@@ -194,6 +202,7 @@ function emptyDay() {
     soundsCorrect: 0,
     wordsBuilt: 0,
     helpedWordsBuilt: 0,
+    mazeCompleted: 0,
     sentencesRead: 0,
     countingCorrect: 0,
     mathCorrect: 0,
@@ -216,6 +225,7 @@ function normalizeDayEntry(day) {
     soundsCorrect: Number(day.soundsCorrect) || 0,
     wordsBuilt: Number(day.wordsBuilt) || 0,
     helpedWordsBuilt: Number(day.helpedWordsBuilt) || 0,
+    mazeCompleted: Number(day.mazeCompleted) || 0,
     sentencesRead: Number(day.sentencesRead) || 0,
     countingCorrect: Number(day.countingCorrect) || 0,
     mathCorrect: Number(day.mathCorrect) || 0,
@@ -273,6 +283,7 @@ function defaultProgress() {
       soundsCorrect: 0,
       wordsBuilt: 0,
       helpedWordsBuilt: 0,
+      mazeCompleted: 0,
       sentencesRead: 0,
       countingCorrect: 0,
       mathCorrect: 0,
@@ -409,6 +420,7 @@ function migrateProgress(raw) {
       soundsCorrect: Number(safeRaw.totals?.soundsCorrect) || 0,
       wordsBuilt: Number(safeRaw.totals?.wordsBuilt) || 0,
       helpedWordsBuilt: Number(safeRaw.totals?.helpedWordsBuilt) || 0,
+      mazeCompleted: Number(safeRaw.totals?.mazeCompleted) || 0,
       sentencesRead: Number(safeRaw.totals?.sentencesRead) || 0,
       countingCorrect: Number(safeRaw.totals?.countingCorrect) || 0,
       mathCorrect: Number(safeRaw.totals?.mathCorrect) || 0,
@@ -541,6 +553,12 @@ function runSelfTests() {
   console.assert(getProgressSaveModeLabel({ configured: false }).id === "local", "unconfigured cloud should be local only");
   console.assert(getProgressSaveModeLabel({ configured: true, authEmail: "a@b.c", syncStatus: "saved" }).label === "Saved", "signed in saved should show Saved");
   console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "syncing" }).label === "Saving", "syncing should show Saving");
+  console.assert(isModeUnlocked("sounds", { level: 1 }), "level 1 unlocks sounds");
+  console.assert(!isModeUnlocked("readingMaze", { level: 2 }), "reading maze locked below level 3");
+  console.assert(isModeUnlocked("readingMaze", { level: 3 }), "reading maze unlocks at level 3");
+  console.assert(!isModeUnlocked("math", { level: 4 }), "math unlocks at level 5");
+  console.assert(!isModeUnlocked("kidRewards", { level: 1 }), "badges unlock at level 2");
+  console.assert(isModeUnlocked("kidRewards", { level: 2 }), "badges unlock at level 2");
 }
 
 if (typeof window !== "undefined" && !window.__octaviaReadingQuestTestsRan_v04) {
@@ -686,9 +704,54 @@ function TodayStatsDashboard({ today }) {
   );
 }
 
+function GameLaunchCard({ game, progress, setMode, className = "" }) {
+  const { unlocked, requirementLabel } = getGameUnlockState(game.id, progress);
+
+  if (!unlocked || game.comingSoon) {
+    return (
+      <div
+        className={`relative rounded-3xl border-2 border-dashed border-slate-400 bg-slate-100 p-5 text-left shadow-inner ${className}`}
+        aria-disabled="true"
+      >
+        <span className="absolute right-4 top-4 text-2xl" aria-hidden>
+          🔒
+        </span>
+        <div className="text-5xl opacity-60">{game.emoji}</div>
+        <div className="mt-2 text-2xl font-black text-slate-600">{game.title}</div>
+        <p className="mt-1 text-sm font-bold text-slate-500">{game.blurb}</p>
+        <p className="mt-2 text-sm font-black text-violet-900">{requirementLabel}</p>
+      </div>
+    );
+  }
+
+  const tone =
+    game.category === "core"
+      ? game.id === "sounds"
+        ? "bg-pink-100"
+        : game.id === "build"
+          ? "bg-lime-100"
+          : "bg-violet-100"
+      : game.id === "readingMaze"
+        ? "bg-indigo-100"
+        : game.id === "miniGames"
+          ? "bg-cyan-100"
+          : "bg-orange-100";
+
+  return (
+    <BigButton onClick={() => setMode(game.mode)} className={`${tone} text-left ${className}`}>
+      <div className="text-5xl">{game.emoji}</div>
+      <div className="mt-2 text-2xl">{game.title}</div>
+      <p className="mt-1 text-sm font-bold text-slate-600">{game.blurb}</p>
+    </BigButton>
+  );
+}
+
 function Home({ setMode, progress }) {
   const earnedBadges = BADGES.filter((b) => progress.badges.includes(b.id));
   const today = normalizeDayEntry(progress.dailyLog[TODAY_KEY]);
+  const coreGames = listCoreGames();
+  const unlockables = listUnlockableGames();
+  const bonusGames = listBonusGames();
   return (
     <div className="rq-page mx-auto grid max-w-5xl gap-5 px-4 pb-10">
       <div className="rounded-[2rem] border-2 border-slate-900 bg-white p-5 shadow-[0_8px_0_rgba(15,23,42,1)]">
@@ -721,21 +784,25 @@ function Home({ setMode, progress }) {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <BigButton onClick={() => setMode("sounds")} className="bg-pink-100 text-left">
-          <div className="text-5xl">🔊</div>
-          <div className="mt-2 text-2xl">Sound Pop</div>
-          <p className="mt-1 text-sm font-bold text-slate-600">Hear a sound. Tap the matching letter.</p>
-        </BigButton>
-        <BigButton onClick={() => setMode("build")} className="bg-lime-100 text-left">
-          <div className="text-5xl">🧱</div>
-          <div className="mt-2 text-2xl">Build a Word</div>
-          <p className="mt-1 text-sm font-bold text-slate-600">Tap letters in order and blend them together.</p>
-        </BigButton>
-        <BigButton onClick={() => setMode("read")} className="bg-violet-100 text-left">
-          <div className="text-5xl">📖</div>
-          <div className="mt-2 text-2xl">Read It!</div>
-          <p className="mt-1 text-sm font-bold text-slate-600">Read a short sentence with one helper button.</p>
-        </BigButton>
+        {coreGames.map((game) => (
+          <GameLaunchCard key={game.id} game={game} progress={progress} setMode={setMode} />
+        ))}
+      </div>
+
+      <section className="rounded-[2rem] border-2 border-slate-900 bg-white p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
+        <h2 className="text-2xl font-black">Unlockables</h2>
+        <p className="mt-1 text-sm font-semibold text-slate-600">Special games you earn as your reader level grows.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {unlockables.map((game) => (
+            <GameLaunchCard key={game.id} game={game} progress={progress} setMode={setMode} />
+          ))}
+        </div>
+      </section>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {bonusGames.map((game) => (
+          <GameLaunchCard key={game.id} game={game} progress={progress} setMode={setMode} />
+        ))}
       </div>
 
       <BigButton onClick={() => setMode("teacher")} className="bg-teal-100 text-left">
@@ -744,26 +811,26 @@ function Home({ setMode, progress }) {
         <p className="mt-1 text-sm font-bold text-slate-600">For Summer: summary, next activity, and daily notes.</p>
       </BigButton>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {isModeUnlocked("kidRewards", progress) ? (
         <BigButton onClick={() => setMode("kidRewards")} className="bg-yellow-100 text-left">
           <div className="text-5xl">🏆</div>
           <div className="mt-2 text-2xl">My Badges</div>
           <p className="mt-1 text-sm font-bold text-slate-600">See badges, stars, and prizes.</p>
         </BigButton>
-        <BigButton onClick={() => setMode("miniGames")} className="bg-cyan-100 text-left">
-          <div className="text-5xl">🎮</div>
-          <div className="mt-2 text-2xl">Star Games</div>
-          <p className="mt-1 text-sm font-bold text-slate-600">Spend stars on tiny unlockable games.</p>
-        </BigButton>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-1">
-        <BigButton onClick={() => setMode("math")} className="bg-orange-100 text-left">
-          <div className="text-5xl">🔢</div>
-          <div className="mt-2 text-2xl">Counting & Math</div>
-          <p className="mt-1 text-sm font-bold text-slate-600">Count objects and solve tiny math stories.</p>
-        </BigButton>
-      </div>
+      ) : (
+        <div
+          className="relative rounded-3xl border-2 border-dashed border-slate-400 bg-slate-100 p-5 text-left shadow-inner"
+          aria-disabled="true"
+        >
+          <span className="absolute right-4 top-4 text-2xl" aria-hidden>
+            🔒
+          </span>
+          <div className="text-5xl opacity-60">🏆</div>
+          <div className="mt-2 text-2xl font-black text-slate-600">My Badges</div>
+          <p className="mt-1 text-sm font-bold text-slate-500">See badges, stars, and prizes.</p>
+          <p className="mt-2 text-sm font-black text-violet-900">Unlocks at Level 2</p>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="rounded-[2rem] border-2 border-slate-900 bg-amber-50 p-4 md:col-span-2">
@@ -2020,6 +2087,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
             soundsCorrect: 0,
             wordsBuilt: 0,
             helpedWordsBuilt: 0,
+            mazeCompleted: 0,
             sentencesRead: 0,
           },
         ])
@@ -2042,6 +2110,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
           soundsCorrect: 0,
           wordsBuilt: 0,
           helpedWordsBuilt: 0,
+          mazeCompleted: 0,
           sentencesRead: 0,
           wordFamiliesUsed: [],
           readingWinsAtLevel2Plus: 0,
@@ -2547,6 +2616,11 @@ export default function App() {
   const readingTheme = progress.settings?.readingTheme === "bird" ? "bird" : "default";
   const playerLevel = progress.level || 1;
 
+  useEffect(() => {
+    if (mode === "home" || mode === "teacher" || mode === "admin") return;
+    if (!isModeUnlocked(mode, progress)) setMode("home");
+  }, [mode, progress.level]);
+
   const progressRef = useRef(progress);
   progressRef.current = progress;
 
@@ -2696,6 +2770,7 @@ export default function App() {
         wordsBuilt: wordsBuiltAdd,
         helpedWordsBuilt: helpedWordsAdd,
         sentencesRead: kind === "read" ? 1 : 0,
+        mazeCompleted: kind === "maze" ? 1 : 0,
         countingCorrect: kind === "counting" ? 1 : 0,
         mathCorrect: kind === "math" ? 1 : 0,
       };
@@ -2720,6 +2795,7 @@ export default function App() {
             wordsBuilt: day.wordsBuilt + add.wordsBuilt,
             helpedWordsBuilt: (Number(day.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
             sentencesRead: day.sentencesRead + add.sentencesRead,
+            mazeCompleted: (Number(day.mazeCompleted) || 0) + add.mazeCompleted,
             countingCorrect: day.countingCorrect + add.countingCorrect,
             mathCorrect: day.mathCorrect + add.mathCorrect,
             lastPlayedAt: new Date().toISOString(),
@@ -2731,6 +2807,7 @@ export default function App() {
           wordsBuilt: (Number(totals.wordsBuilt) || 0) + add.wordsBuilt,
           helpedWordsBuilt: (Number(totals.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
           sentencesRead: (Number(totals.sentencesRead) || 0) + add.sentencesRead,
+          mazeCompleted: (Number(totals.mazeCompleted) || 0) + add.mazeCompleted,
           countingCorrect: (Number(totals.countingCorrect) || 0) + add.countingCorrect,
           mathCorrect: (Number(totals.mathCorrect) || 0) + add.mathCorrect,
           wordFamiliesUsed,
@@ -2776,6 +2853,15 @@ export default function App() {
             todayStats={progress.dailyLog[TODAY_KEY]}
           />
         )}
+        {mode === "readingMaze" && isModeUnlocked("readingMaze", progress) && (
+          <ReadingMaze
+            logWin={logWin}
+            logAttempt={logAttempt}
+            playerLevel={playerLevel}
+            activeReadingLevel={activeReadingLevel}
+            readingTheme={readingTheme}
+          />
+        )}
         {mode === "teacher" && (
           <TeacherModeScreen
             progress={progress}
@@ -2819,7 +2905,7 @@ export default function App() {
             }}
           />
         )}
-        {mode === "kidRewards" && <KidRewards progress={progress} />}
+        {mode === "kidRewards" && isModeUnlocked("kidRewards", progress) && <KidRewards progress={progress} />}
         {mode === "miniGames" && <MiniGames progress={progress} setProgress={updateProgress} testMode={testMode} />}
         {mode === "math" && (
           <MathAndCounting logWin={logWin} logAttempt={logAttempt} playerLevel={playerLevel} activeMathLevel={activeMathLevel} />

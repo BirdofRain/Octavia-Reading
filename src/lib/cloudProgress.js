@@ -118,4 +118,11 @@ export function runCloudSyncSelfTests() {
     cloudNewer.dailyLog["2026-05-15"].sentencesRead === 4,
     "when cloud is newer, today's log should not be overwritten by stale local"
   );
+
+  const mazeMerge = mergeProgress(
+    { totals: { mazeCompleted: 2 }, dailyLog: { "2026-05-01": { mazeCompleted: 1 } } },
+    { totals: { mazeCompleted: 5 }, dailyLog: { "2026-05-01": { mazeCompleted: 3 } } }
+  );
+  console.assert(mazeMerge.totals.mazeCompleted === 5, "mergeProgress should max mazeCompleted totals");
+  console.assert(mazeMerge.dailyLog["2026-05-01"].mazeCompleted === 3, "mergeProgress should max mazeCompleted per day");
 }

@@ -55,7 +55,7 @@ export function computeXp(progress) {
 function computeUnlockedModes(level) {
   const modes = ["sounds", "home"];
   if (level >= 2) modes.push("build", "kidRewards");
-  if (level >= 3) modes.push("read");
+  if (level >= 3) modes.push("read", "readingMaze");
   if (level >= 4) modes.push("miniGames");
   if (level >= 5) modes.push("math");
   return modes;
