@@ -91,6 +91,29 @@ export function validateMazeLayout(layout) {
     }
   }
 
+  const MAX_STRAIGHT = 4;
+  let runDir = null;
+  let runLen = 1;
+  for (let i = 1; i < mainPath.length; i += 1) {
+    const [pr, pc] = mainPath[i - 1];
+    const [r, c] = mainPath[i];
+    const dr = r - pr;
+    const dc = c - pc;
+    const dir = dr !== 0 ? `v${dr > 0 ? "+" : "-"}` : `h${dc > 0 ? "+" : "-"}`;
+    if (dir === runDir) {
+      runLen += 1;
+      if (runLen > MAX_STRAIGHT) {
+        errors.push(
+          `${id} mainPath: ${runLen} cells in a row along ${runDir} ending at [${r},${c}] (max ${MAX_STRAIGHT}) — add a turn for maze variety`
+        );
+        break;
+      }
+    } else {
+      runDir = dir;
+      runLen = 1;
+    }
+  }
+
   return errors;
 }
 
