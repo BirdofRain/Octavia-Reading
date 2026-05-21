@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createGameSession } from "./lib/difficulty.js";
 import { enrichMazeLayout, speakCheckpointClue } from "./lib/mazePrompts.js";
 import {
+  getPraiseLine,
+  shouldSpeakPraise,
+  subtleCorrectResult,
+} from "./lib/feedbackPacing.js";
+import {
   cellSizeClassForTier,
   mainPathSegment,
   MAZE_TIER_LABELS,
@@ -12,12 +17,12 @@ import {
   clearScheduledTimers,
   scheduleAudio,
   speakText,
-  TTS_AFTER_PHRASE_GAP_MS,
 } from "./lib/questAudio.js";
 
 const MAZE_WIN_PHRASE = ["You finished the maze!", "Amazing reading path!", "Maze champion!"];
 const WALK_STEP_MS = 280;
 const WRONG_END_PAUSE_MS = 900;
+const MAZE_TRY_AGAIN = "Try again.";
 
 /** @typedef {"moving"|"waitingForAnswer"|"wrongBranchMoving"|"returningToCheckpoint"|"completed"} MazePhase */
 
@@ -72,9 +77,10 @@ function BranchingMazeGrid({ layout, birdCell, cellSizeClass }) {
   );
 }
 
-export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme }) {
+export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme, celebrationFrequency }) {
   const sessionRef = useRef(createGameSession());
   const roundTokenRef = useRef(0);
+  const correctCountRef = useRef(0);
   const layoutRef = useRef(null);
   const lastLayoutIdRef = useRef(null);
 
@@ -160,6 +166,7 @@ export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLeve
         const praise = pickRandom(MAZE_WIN_PHRASE);
         setResult({ type: "good", text: `${praise} +1 star!` });
         logWin("maze");
+        cancelSpeech();
         speakText(praise, 0.78);
       });
     },
@@ -196,6 +203,7 @@ export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLeve
     setPrompt(enriched.checkpoints[0]?.prompt ?? null);
     setResult(null);
     setPhase("moving");
+    correctCountRef.current = 0;
     return enriched;
   }, [playerLevel]);
 
@@ -217,9 +225,15 @@ export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLeve
   const handleCorrect = (token) => {
     const cpIdx = checkpointIndex;
     const nextCpIdx = cpIdx + 1;
-    setResult({ type: "good", text: "Yes! Keep going!" });
+    correctCountRef.current += 1;
+    const speakPraise = shouldSpeakPraise({
+      correctCount: correctCountRef.current,
+      celebrationFrequency,
+    });
+    const praiseLine = speakPraise ? getPraiseLine() : null;
+    setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
 
-    speakText("Yes!", 0.78, () => {
+    const advanceAfterCorrect = () => {
       if (!isTokenAlive(token)) return;
       setResult(null);
       const currentCp = layoutRef.current.checkpoints[cpIdx];
@@ -237,24 +251,39 @@ export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLeve
         if (!isTokenAlive(token)) return;
         beginCheckpoint(nextCpIdx, token);
       });
-    });
+    };
+
+    if (speakPraise) {
+      cancelSpeech();
+      speakText(praiseLine, 0.78, () => {
+        scheduleAudio(advanceAfterCorrect, 280);
+      });
+    } else {
+      scheduleAudio(() => setResult(null), 400);
+      advanceAfterCorrect();
+    }
   };
 
   const handleWrong = (choice, token) => {
     const cp = layoutRef.current.checkpoints[checkpointIndex];
     const branch = cp.wrongBranchPaths[choice.wrongPathIndex] || cp.wrongBranchPaths[0];
+
+    const retryClue = () => {
+      if (!isTokenAlive(token)) return;
+      speakCheckpointClue(cp.prompt);
+    };
+
     if (!branch?.length) {
-      speakText("Try again.", 0.72, () => {
-        if (!isTokenAlive(token)) return;
-        speakCheckpointClue(cp.prompt);
-      });
+      cancelSpeech();
+      speakText(MAZE_TRY_AGAIN, 0.72, retryClue);
       return;
     }
 
     setPhase("wrongBranchMoving");
     walkCells(branch, token, () => {
       if (!isTokenAlive(token)) return;
-      speakText("Try again.", 0.72, () => {
+      cancelSpeech();
+      speakText(MAZE_TRY_AGAIN, 0.72, () => {
         if (!isTokenAlive(token)) return;
         scheduleAudio(() => {
           if (!isTokenAlive(token)) return;
@@ -311,7 +340,7 @@ export function ReadingMaze({ logWin, logAttempt, playerLevel, activeReadingLeve
         <div
           className={`rq-pop fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-full border-2 border-slate-900 px-5 py-3 text-lg font-black shadow-xl ${
             result.type === "good" ? "bg-emerald-200" : "bg-rose-100"
-          }`}
+          } ${result.subtle ? "px-4 py-2 text-2xl" : ""}`}
         >
           {result.text}
         </div>

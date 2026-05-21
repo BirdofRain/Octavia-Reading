@@ -2,9 +2,11 @@ import React, { useEffect, useState } from "react";
 import {
   TEACHER_FOCUS_OPTIONS,
   TEACHER_DIFFICULTY_OPTIONS,
+  CELEBRATION_FREQUENCY_OPTIONS,
   getTeacherRecommendation,
   normalizeTeacherFocus,
   normalizeTeacherDifficulty,
+  normalizeCelebrationFrequency,
 } from "./lib/teacherMode.js";
 import { ProgressTransferPanel } from "./ProgressTransferPanel.jsx";
 import { getCloudSyncStatus } from "./lib/progressSync.js";
@@ -16,6 +18,7 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
   const [noteSaved, setNoteSaved] = useState(false);
   const focus = normalizeTeacherFocus(progress.settings?.teacherFocus);
   const difficulty = normalizeTeacherDifficulty(progress.settings?.teacherDifficulty);
+  const celebrationFrequency = normalizeCelebrationFrequency(progress.settings?.celebrationFrequency);
   const correctRate = today.attempts > 0 ? Math.round((today.correct / today.attempts) * 100) : null;
 
   useEffect(() => {
@@ -142,6 +145,22 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
               type="button"
               onClick={() => patchSettings({ teacherDifficulty: opt.id })}
               className={`rq-button rounded-2xl border-2 border-slate-900 p-4 text-left shadow-[0_4px_0_rgba(15,23,42,1)] ${difficulty === opt.id ? "bg-emerald-200" : "bg-white"}`}
+            >
+              <span className="block text-lg font-black">{opt.label}</span>
+              <span className="mt-1 block text-sm font-semibold text-slate-600">{opt.blurb}</span>
+            </button>
+          ))}
+        </div>
+
+        <p className="mt-6 font-black text-slate-800">Celebration frequency</p>
+        <p className="mt-1 text-sm font-semibold text-slate-600">How often the app speaks praise after correct answers.</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-3">
+          {CELEBRATION_FREQUENCY_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => patchSettings({ celebrationFrequency: opt.id })}
+              className={`rq-button rounded-2xl border-2 border-slate-900 p-4 text-left shadow-[0_4px_0_rgba(15,23,42,1)] ${celebrationFrequency === opt.id ? "bg-amber-200" : "bg-white"}`}
             >
               <span className="block text-lg font-black">{opt.label}</span>
               <span className="mt-1 block text-sm font-semibold text-slate-600">{opt.blurb}</span>

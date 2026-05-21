@@ -32,7 +32,13 @@ import {
 } from "./data/mathContent.js";
 import { filterByMaxLevel } from "./data/levels.js";
 import { createGameSession, formatMathEquation, resolveDifficultyBand } from "./lib/difficulty.js";
-import { getTeacherRecommendation } from "./lib/teacherMode.js";
+import { getTeacherRecommendation, normalizeCelebrationFrequency } from "./lib/teacherMode.js";
+import {
+  getGentleTryAgainLine,
+  getPraiseLine,
+  shouldSpeakPraise,
+  subtleCorrectResult,
+} from "./lib/feedbackPacing.js";
 import { TeacherMode as TeacherModeScreen } from "./TeacherMode.jsx";
 import { ReadingMaze } from "./ReadingMaze.jsx";
 import {
@@ -162,24 +168,6 @@ const ClipboardIcon = ({ className = "" }) => (
   </Icon>
 );
 
-const ENCOURAGEMENT = [
-  "Great try!",
-  "You are getting stronger!",
-  "Good listening!",
-  "Reading muscles are growing!",
-  "Nice work, Octavia!",
-  "That was brave reading!",
-];
-
-const BUILD_WORD_ENCOURAGEMENT = [
-  "You built it!",
-  "Super word!",
-  "That is how readers do it!",
-  "You figured it out!",
-  "Awesome building!",
-  "Nice word work!",
-];
-
 const REWARDS = [
   { id: "story", cost: 5, title: "Pick bedtime story", emoji: "📚", childText: "Story Pick" },
   { id: "snack", cost: 8, title: "Choose a special snack", emoji: "🍓", childText: "Snack Choice" },
@@ -243,15 +231,6 @@ function normalizeDailyLog(dailyLog) {
   return out;
 }
 
-const READ_ENCOURAGEMENT = [
-  "You read it! Amazing!",
-  "Super reader!",
-  "Great reading voice!",
-  "That was awesome reading!",
-  "You did it! One more star!",
-  "Wonderful sentence reading!",
-];
-
 function clampLevel(n) {
   const x = Number(n);
   if (Number.isFinite(x)) return Math.min(4, Math.max(1, Math.round(x)));
@@ -275,6 +254,7 @@ function defaultProgress() {
       readingTheme: "default",
       teacherFocus: "mixed",
       teacherDifficulty: "auto",
+      celebrationFrequency: "calm",
     },
     dailyLog: {
       [TODAY_KEY]: { ...emptyDay(), opened: 1, lastPlayedAt: new Date().toISOString() },
@@ -412,6 +392,9 @@ function migrateProgress(raw) {
       readingTheme: safeRaw.settings?.readingTheme === "bird" ? "bird" : "default",
       teacherFocus: normalizeTeacherFocus(safeRaw.settings?.teacherFocus ?? base.settings.teacherFocus),
       teacherDifficulty: normalizeTeacherDifficulty(safeRaw.settings?.teacherDifficulty ?? base.settings.teacherDifficulty),
+      celebrationFrequency: normalizeCelebrationFrequency(
+        safeRaw.settings?.celebrationFrequency ?? base.settings.celebrationFrequency
+      ),
     },
     dailyLog: normalizeDailyLog({ ...base.dailyLog, ...(safeRaw.dailyLog || {}) }),
     totals: {
@@ -937,7 +920,8 @@ function EmojiRow({ emoji, count, crossed = 0 }) {
   );
 }
 
-function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
+function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel, celebrationFrequency }) {
+  const correctCountRef = useRef(0);
   const sessionRef = useRef(createGameSession());
   const [sessionTick, setSessionTick] = useState(0);
   const progressSlice = useMemo(
@@ -989,7 +973,13 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
     const ok = n === countCard.count;
     recordSession(ok);
     if (ok) {
-      setResult({ type: "good", text: "Good counting!" });
+      correctCountRef.current += 1;
+      const speakPraise = shouldSpeakPraise({
+        correctCount: correctCountRef.current,
+        celebrationFrequency,
+      });
+      const praiseLine = speakPraise ? getPraiseLine() : null;
+      setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
       logWin("counting");
       let done = false;
       const next = () => {
@@ -999,13 +989,19 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
         setResult(null);
       };
       const safety = window.setTimeout(next, TTS_FALLBACK_TOTAL_MS);
-      speak(`Yes. ${countCard.count} ${countCard.label}.`, 0.72, () => {
+      const afterSpeech = () => {
         window.clearTimeout(safety);
         window.setTimeout(next, TTS_AFTER_PHRASE_GAP_MS);
-      });
+      };
+      if (speakPraise) {
+        speak(praiseLine, 0.72, afterSpeech);
+      } else {
+        window.setTimeout(next, RIGHT_ANSWER_PAUSE_MS);
+        scheduleAudio(() => setResult(null), 500);
+      }
     } else {
       setResult({ type: "try", text: "Count again" });
-      speak("Good try. Count them slowly.", 0.72);
+      speak(getGentleTryAgainLine(), 0.72);
       setTimeout(() => setResult(null), 900);
     }
   };
@@ -1016,9 +1012,14 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
     const ok = n === mathCard.answer;
     recordSession(ok);
     if (ok) {
-      setResult({ type: "good", text: "Math helper!" });
+      correctCountRef.current += 1;
+      const speakPraise = shouldSpeakPraise({
+        correctCount: correctCountRef.current,
+        celebrationFrequency,
+      });
+      const praiseLine = speakPraise ? getPraiseLine() : null;
+      setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
       logWin("math");
-      const praise = mathCard.missing ? `Yes. The missing number is ${mathCard.answer}.` : `Yes. The answer is ${mathCard.answer}.`;
       let done = false;
       const next = () => {
         if (done) return;
@@ -1027,13 +1028,19 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel }) {
         setResult(null);
       };
       const safety = window.setTimeout(next, TTS_FALLBACK_TOTAL_MS);
-      speak(praise, 0.72, () => {
+      const afterSpeech = () => {
         window.clearTimeout(safety);
         window.setTimeout(next, TTS_AFTER_PHRASE_GAP_MS);
-      });
+      };
+      if (speakPraise) {
+        speak(praiseLine, 0.72, afterSpeech);
+      } else {
+        window.setTimeout(next, RIGHT_ANSWER_PAUSE_MS);
+        scheduleAudio(() => setResult(null), 500);
+      }
     } else {
       setResult({ type: "try", text: "Try again" });
-      speak("Good try. Use your fingers if you need to.", 0.72);
+      speak(getGentleTryAgainLine(), 0.72);
       setTimeout(() => setResult(null), 900);
     }
   };
@@ -1333,13 +1340,14 @@ function MiniGames({ progress, setProgress, testMode }) {
 
 function ResultToast({ result }) {
   if (!result) return null;
+  const subtle = Boolean(result.subtle);
   return (
     <div
-      className={`rq-pop fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border-2 border-slate-900 px-5 py-3 text-lg font-black shadow-xl ${
+      className={`rq-pop fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border-2 border-slate-900 shadow-xl ${
         result.type === "good" ? "bg-emerald-200" : "bg-rose-200"
-      }`}
+      } ${subtle ? "px-4 py-2 text-2xl" : "px-5 py-3 text-lg font-black"}`}
     >
-      {result.type === "good" ? <CheckIcon /> : <XIcon />}
+      {result.type === "good" ? <CheckIcon className={subtle ? "text-xl" : ""} /> : <XIcon />}
       {result.text}
     </div>
   );
@@ -1359,8 +1367,9 @@ function BadgeToast({ badge }) {
   );
 }
 
-function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
+function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celebrationFrequency }) {
   const sessionRef = useRef(createGameSession());
+  const correctCountRef = useRef(0);
   const [sessionTick, setSessionTick] = useState(0);
   const progressSlice = useMemo(
     () => ({ level: playerLevel, settings: { activeReadingLevel } }),
@@ -1399,7 +1408,7 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-play target letter after each new challenge renders (do not cancel speech — praise may still be finishing).
+  // Auto-play target letter after each new challenge renders.
   useEffect(() => {
     const token = ++roundTokenRef.current;
     clearScheduledTimers();
@@ -1437,8 +1446,13 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
     if (ok) {
       const tokenAtAnswer = roundTokenRef.current;
       setIsTransitioning(true);
-      const praise = pickRandom(ENCOURAGEMENT);
-      setResult({ type: "good", text: praise });
+      correctCountRef.current += 1;
+      const speakPraise = shouldSpeakPraise({
+        correctCount: correctCountRef.current,
+        celebrationFrequency,
+      });
+      const praiseLine = speakPraise ? getPraiseLine() : null;
+      setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
       logWin("sounds");
       clearScheduledTimers();
       let advanced = false;
@@ -1450,15 +1464,22 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
       };
       const safetyId = scheduleAudio(advance, TTS_FALLBACK_TOTAL_MS);
 
-      speakText(praise, 0.78, () => {
+      if (speakPraise) {
+        speakText(praiseLine, 0.78, () => {
+          cancelScheduledTimer(safetyId);
+          scheduleAudio(advance, TTS_AFTER_PHRASE_GAP_MS);
+        });
+      } else {
+        scheduleAudio(() => setResult(null), 500);
         cancelScheduledTimer(safetyId);
-        scheduleAudio(advance, TTS_AFTER_PHRASE_GAP_MS);
-      });
+        scheduleAudio(advance, RIGHT_ANSWER_PAUSE_MS);
+      }
     } else {
       const tokenAtWrong = roundTokenRef.current;
       setResult({ type: "try", text: "Try again" });
       clearScheduledTimers();
-      speakText("Good try. Listen again.", 0.72, () => {
+      cancelSpeech();
+      speakText(getGentleTryAgainLine(), 0.72, () => {
         scheduleAudio(() => {
           if (roundTokenRef.current !== tokenAtWrong) return;
           speakLetterSound(targetRef.current);
@@ -1507,9 +1528,10 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel }) {
   );
 }
 
-function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme }) {
+function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme, celebrationFrequency }) {
   const sessionRef = useRef(createGameSession());
   const roundTokenRef = useRef(0);
+  const correctCountRef = useRef(0);
   const [sessionTick, setSessionTick] = useState(0);
   const progressSlice = useMemo(
     () => ({ level: playerLevel, settings: { activeReadingLevel, readingTheme } }),
@@ -1624,12 +1646,11 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
       }
       if (step >= parts.length) {
         setGiveUpRunning(false);
-        const praise = "We built it together.";
-        setResult({ type: "good", text: praise });
+        setResult(subtleCorrectResult());
         logWin("build", { family: target.family, buildOutcome: "giveup" });
         scheduleAudio(() => {
           if (roundTokenRef.current !== tokenAt) return;
-          speakText("Nice try. You kept going. Next time you might get it on your own!", 0.76);
+          speakText("We built it together.", 0.76);
         }, TTS_AFTER_PHRASE_GAP_MS);
         return;
       }
@@ -1658,23 +1679,39 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
       setBuilt(newBuilt);
       if (newBuilt.length === target.parts.length) {
         recordSession(true);
-        const praise = pickRandom(BUILD_WORD_ENCOURAGEMENT);
-        setResult({ type: "good", text: praise });
+        correctCountRef.current += 1;
+        const speakPraise = shouldSpeakPraise({
+          correctCount: correctCountRef.current,
+          celebrationFrequency,
+        });
+        const praiseLine = speakPraise ? getPraiseLine() : null;
+        setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
         logWin("build", { family: target.family });
         const tokenAt = roundTokenRef.current;
         const safetyId = scheduleAudio(() => {
+          if (roundTokenRef.current !== tokenAt) return;
           speakText(target.word, 0.72);
         }, TTS_FALLBACK_TOTAL_MS);
-        speakText(praise, 0.78, () => {
-          if (roundTokenRef.current !== tokenAt) return;
+        if (speakPraise) {
+          speakText(praiseLine, 0.78, () => {
+            if (roundTokenRef.current !== tokenAt) return;
+            cancelScheduledTimer(safetyId);
+            speakText(target.word, 0.72);
+          });
+        } else {
+          scheduleAudio(() => setResult(null), 500);
           cancelScheduledTimer(safetyId);
-          speakText(target.word, 0.72);
-        });
+          scheduleAudio(() => {
+            if (roundTokenRef.current !== tokenAt) return;
+            speakText(target.word, 0.72);
+          }, RIGHT_ANSWER_PAUSE_MS);
+        }
       }
     } else {
       recordSession(false);
       setResult({ type: "try", text: "Try another letter" });
-      speakText("Not quite. Try a different letter.", 0.72);
+      cancelSpeech();
+      speakText(getGentleTryAgainLine(), 0.72);
       scheduleAudio(() => setResult(null), 1400);
     }
   };
@@ -1756,7 +1793,8 @@ function normalizeWordToken(raw) {
   return raw.replace(/[^a-z]/gi, "").toLowerCase();
 }
 
-function ReadGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme, todayStats }) {
+function ReadGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme, todayStats, celebrationFrequency }) {
+  const correctCountRef = useRef(0);
   const sessionRef = useRef(createGameSession());
   const advanceTimerRef = useRef(null);
   const [sessionTick, setSessionTick] = useState(0);
@@ -1811,20 +1849,30 @@ function ReadGame({ logWin, logAttempt, playerLevel, activeReadingLevel, reading
     recordSession(true);
     logAttempt();
     logWin("read", { sentenceId: card.id });
-    const praise = pickRandom(READ_ENCOURAGEMENT);
-    setResult({ type: "good", text: `${praise} +1 star!` });
-    setCelebrate(true);
+    correctCountRef.current += 1;
+    const speakPraise = shouldSpeakPraise({
+      correctCount: correctCountRef.current,
+      celebrationFrequency,
+    });
+    const praiseLine = speakPraise ? getPraiseLine() : null;
+    setResult(speakPraise ? { type: "good", text: `${praiseLine} +1 star!` } : subtleCorrectResult());
+    setCelebrate(speakPraise);
     if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
     const advance = () => {
       advanceTimerRef.current = null;
       setCelebrate(false);
       goToNextSentence();
     };
-    advanceTimerRef.current = window.setTimeout(advance, TTS_FALLBACK_TOTAL_MS);
-    speak(praise, 0.78, () => {
-      if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
-      advanceTimerRef.current = window.setTimeout(advance, TTS_AFTER_PHRASE_GAP_MS);
-    });
+    const delayMs = speakPraise ? TTS_FALLBACK_TOTAL_MS : RIGHT_ANSWER_PAUSE_MS;
+    advanceTimerRef.current = window.setTimeout(advance, delayMs);
+    if (speakPraise) {
+      speak(praiseLine, 0.78, () => {
+        if (advanceTimerRef.current) window.clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = window.setTimeout(advance, TTS_AFTER_PHRASE_GAP_MS);
+      });
+    } else {
+      scheduleAudio(() => setResult(null), 500);
+    }
   };
 
   const day = normalizeDayEntry(todayStats);
@@ -2614,6 +2662,7 @@ export default function App() {
   const activeReadingLevel = clampLevel(progress.settings?.activeReadingLevel);
   const activeMathLevel = clampLevel(progress.settings?.activeMathLevel);
   const readingTheme = progress.settings?.readingTheme === "bird" ? "bird" : "default";
+  const celebrationFrequency = normalizeCelebrationFrequency(progress.settings?.celebrationFrequency);
   const playerLevel = progress.level || 1;
 
   useEffect(() => {
@@ -2832,7 +2881,13 @@ export default function App() {
       <div key={mode}>
         {mode === "home" && <Home setMode={setMode} progress={progress} />}
         {mode === "sounds" && (
-          <SoundsGame logWin={logWin} logAttempt={logAttempt} playerLevel={playerLevel} activeReadingLevel={activeReadingLevel} />
+          <SoundsGame
+            logWin={logWin}
+            logAttempt={logAttempt}
+            playerLevel={playerLevel}
+            activeReadingLevel={activeReadingLevel}
+            celebrationFrequency={celebrationFrequency}
+          />
         )}
         {mode === "build" && (
           <BuildWordGame
@@ -2841,6 +2896,7 @@ export default function App() {
             playerLevel={playerLevel}
             activeReadingLevel={activeReadingLevel}
             readingTheme={readingTheme}
+            celebrationFrequency={celebrationFrequency}
           />
         )}
         {mode === "read" && (
@@ -2851,6 +2907,7 @@ export default function App() {
             activeReadingLevel={activeReadingLevel}
             readingTheme={readingTheme}
             todayStats={progress.dailyLog[TODAY_KEY]}
+            celebrationFrequency={celebrationFrequency}
           />
         )}
         {mode === "readingMaze" && isModeUnlocked("readingMaze", progress) && (
@@ -2860,6 +2917,7 @@ export default function App() {
             playerLevel={playerLevel}
             activeReadingLevel={activeReadingLevel}
             readingTheme={readingTheme}
+            celebrationFrequency={celebrationFrequency}
           />
         )}
         {mode === "teacher" && (
@@ -2908,7 +2966,13 @@ export default function App() {
         {mode === "kidRewards" && isModeUnlocked("kidRewards", progress) && <KidRewards progress={progress} />}
         {mode === "miniGames" && <MiniGames progress={progress} setProgress={updateProgress} testMode={testMode} />}
         {mode === "math" && (
-          <MathAndCounting logWin={logWin} logAttempt={logAttempt} playerLevel={playerLevel} activeMathLevel={activeMathLevel} />
+          <MathAndCounting
+            logWin={logWin}
+            logAttempt={logAttempt}
+            playerLevel={playerLevel}
+            activeMathLevel={activeMathLevel}
+            celebrationFrequency={celebrationFrequency}
+          />
         )}
       </div>
     </main>

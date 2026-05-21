@@ -7,7 +7,7 @@ export function cancelSpeech() {
   window.speechSynthesis.cancel();
 }
 
-/** Drop pending timeouts only — does not interrupt speech (keeps praise from being cut mid-phrase). */
+/** Drop pending timeouts only — does not interrupt in-flight speech. */
 export function clearScheduledTimers() {
   pendingTimers.forEach((id) => window.clearTimeout(id));
   pendingTimers.clear();

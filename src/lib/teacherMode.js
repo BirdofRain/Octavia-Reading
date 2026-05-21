@@ -16,6 +16,8 @@ export const TEACHER_DIFFICULTY_OPTIONS = [
   { id: "challenge", label: "Challenge", blurb: "Stretch goals when she is ready." },
 ];
 
+export { CELEBRATION_FREQUENCY_OPTIONS, normalizeCelebrationFrequency } from "./feedbackPacing.js";
+
 export function normalizeTeacherFocus(value) {
   const id = String(value || "mixed");
   return TEACHER_FOCUS_OPTIONS.some((o) => o.id === id) ? id : "mixed";
