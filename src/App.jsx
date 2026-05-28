@@ -955,6 +955,7 @@ function MathAndCounting({ logWin, logAttempt, playerLevel, activeMathLevel, cel
   }, [mathPool]);
 
   const countChoices = useMemo(() => {
+    if (!countCard) return [];
     const wrong = countingPool.map((x) => x.count).filter((n) => n !== countCard.count);
     return shuffle([countCard.count, ...shuffle(wrong).slice(0, 3)]);
   }, [countCard, countingPool]);
