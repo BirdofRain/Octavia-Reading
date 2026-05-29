@@ -83,10 +83,10 @@ export function getTeacherRecommendation(day, progress) {
 
   if (focus === "phonics" && soundsCorrect <= wordsBuilt) {
     return {
-      title: "Phonics focus: Sound Pop",
-      message: "Today's plan is phonics. A few rounds of letter sounds warm up reading.",
-      mode: "sounds",
-      emoji: "🔊",
+      title: "Phonics focus: Letter Echo",
+      message: "Today's plan is phonics. Warm up with repeat-after-me letter practice, then try Sound Pop.",
+      mode: "letterEcho",
+      emoji: "🗣️",
       tone: "focus",
     };
   }

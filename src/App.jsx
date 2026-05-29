@@ -10,7 +10,7 @@ import {
   supabaseConfigured,
   runCloudSyncSelfTests,
 } from "./lib/cloudProgress.js";
-import { LETTERS, WORD_FAMILIES, lettersForReadingDifficulty } from "./data/phonics.js";
+import { LETTERS, WORD_FAMILIES, lettersForReadingDifficulty, buildLetterLessonLines, letterChoiceDisplay, letterCaseInWord, letterUpper, letterLower } from "./data/phonics.js";
 import {
   wordsForReadingLevel,
   sentencesForReadingLevel,
@@ -55,8 +55,10 @@ import {
   clearScheduledTimers,
   scheduleAudio,
   speakLetterSound,
+  speakLetterLesson,
   speakText,
   SOUND_POP_AUTO_PLAY_MS,
+  LETTER_ECHO_AUTO_PLAY_MS,
   TTS_AFTER_PHRASE_GAP_MS,
   TTS_FALLBACK_TOTAL_MS,
 } from "./lib/questAudio.js";
@@ -188,6 +190,7 @@ function emptyDay() {
     correct: 0,
     stars: 0,
     soundsCorrect: 0,
+    letterEchoCompleted: 0,
     wordsBuilt: 0,
     helpedWordsBuilt: 0,
     mazeCompleted: 0,
@@ -211,6 +214,7 @@ function normalizeDayEntry(day) {
     correct: Number(day.correct) || 0,
     stars: Number(day.stars) || 0,
     soundsCorrect: Number(day.soundsCorrect) || 0,
+    letterEchoCompleted: Number(day.letterEchoCompleted) || 0,
     wordsBuilt: Number(day.wordsBuilt) || 0,
     helpedWordsBuilt: Number(day.helpedWordsBuilt) || 0,
     mazeCompleted: Number(day.mazeCompleted) || 0,
@@ -237,6 +241,10 @@ function clampLevel(n) {
   return 1;
 }
 
+function normalizePhonicsAudioEnabled(value) {
+  return value !== false && value !== "false";
+}
+
 function defaultProgress() {
   return {
     version: APP_VERSION,
@@ -255,12 +263,14 @@ function defaultProgress() {
       teacherFocus: "mixed",
       teacherDifficulty: "auto",
       celebrationFrequency: "calm",
+      phonicsAudioEnabled: true,
     },
     dailyLog: {
       [TODAY_KEY]: { ...emptyDay(), opened: 1, lastPlayedAt: new Date().toISOString() },
     },
     totals: {
       soundsCorrect: 0,
+      letterEchoCompleted: 0,
       wordsBuilt: 0,
       helpedWordsBuilt: 0,
       mazeCompleted: 0,
@@ -293,7 +303,8 @@ function getStreak(dailyLog = {}) {
           day.countingCorrect > 0 ||
           day.mathCorrect > 0 ||
           day.wordsBuilt > 0 ||
-          day.soundsCorrect > 0)
+          day.soundsCorrect > 0 ||
+          day.letterEchoCompleted > 0)
     );
 
     if (!practiced) break;
@@ -336,8 +347,8 @@ function speakWholeWord(wordObj) {
   speakText(wordObj.word, 0.72);
 }
 
-/** Speak each letter's phonics `.say` in sequence (for Need Help / Give Up). */
-function speakPhonicsForParts(parts, tokenAtStart, roundTokenRef, onComplete) {
+/** Speak each letter lesson or phoneme in sequence (for Need Help / Give Up). */
+function speakPhonicsForParts(parts, tokenAtStart, roundTokenRef, onComplete, phonicsAudioEnabled = true) {
   let i = 0;
   const arr = [...parts];
   const next = () => {
@@ -348,11 +359,18 @@ function speakPhonicsForParts(parts, tokenAtStart, roundTokenRef, onComplete) {
     }
     const ch = arr[i];
     const lo = LETTERS.find((l) => l.letter === ch);
-    speakText(lo?.say || ch, 0.58, () => {
+    i += 1;
+    const after = () => {
       if (roundTokenRef.current !== tokenAtStart) return;
-      i += 1;
       scheduleAudio(next, BUILD_PHONICS_GAP_MS);
-    });
+    };
+    if (lo && phonicsAudioEnabled) {
+      speakLetterLesson(lo, { enabled: true, onEnd: after });
+    } else if (lo) {
+      after();
+    } else {
+      speakText(ch, 0.58, after);
+    }
   };
   next();
 }
@@ -395,12 +413,16 @@ function migrateProgress(raw) {
       celebrationFrequency: normalizeCelebrationFrequency(
         safeRaw.settings?.celebrationFrequency ?? base.settings.celebrationFrequency
       ),
+      phonicsAudioEnabled: normalizePhonicsAudioEnabled(
+        safeRaw.settings?.phonicsAudioEnabled ?? base.settings.phonicsAudioEnabled
+      ),
     },
     dailyLog: normalizeDailyLog({ ...base.dailyLog, ...(safeRaw.dailyLog || {}) }),
     totals: {
       ...base.totals,
       ...(safeRaw.totals || {}),
       soundsCorrect: Number(safeRaw.totals?.soundsCorrect) || 0,
+      letterEchoCompleted: Number(safeRaw.totals?.letterEchoCompleted) || 0,
       wordsBuilt: Number(safeRaw.totals?.wordsBuilt) || 0,
       helpedWordsBuilt: Number(safeRaw.totals?.helpedWordsBuilt) || 0,
       mazeCompleted: Number(safeRaw.totals?.mazeCompleted) || 0,
@@ -456,7 +478,8 @@ function runSelfTests() {
   console.assert(getStreak(twoDayLog) >= 2, "getStreak should count consecutive practiced days");
   console.assert(awardBadges({ ...p, lifetimeStars: 1 }).badges.includes("first_star"), "first star badge should award at 1 lifetime star");
   console.assert(!String(APP_VERSION).toLowerCase().includes("lucide"), "app version should not reference lucide dependency");
-  console.assert(LETTERS.every((l) => l.say && l.clue), "every letter should include TTS-safe say text and clue text");
+  console.assert(LETTERS.length === 26, "letter bank should include full alphabet");
+  console.assert(LETTERS.every((l) => l.name && l.say && l.clue), "every letter should include name, TTS-safe say text, and clue text");
   console.assert(wordsForReadingLevel(4).length >= 60, "word bank should include many decodable words");
   console.assert(sentencesForReadingLevel(4).length >= 80, "sentence bank should include many practice sentences");
   console.assert(MINI_GAMES.every((g) => g.cost > 0), "every mini game should have a star cost");
@@ -536,6 +559,7 @@ function runSelfTests() {
   console.assert(getProgressSaveModeLabel({ configured: false }).id === "local", "unconfigured cloud should be local only");
   console.assert(getProgressSaveModeLabel({ configured: true, authEmail: "a@b.c", syncStatus: "saved" }).label === "Saved", "signed in saved should show Saved");
   console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "syncing" }).label === "Saving", "syncing should show Saving");
+  console.assert(isModeUnlocked("letterEcho", { level: 1 }), "level 1 unlocks letter echo");
   console.assert(isModeUnlocked("sounds", { level: 1 }), "level 1 unlocks sounds");
   console.assert(!isModeUnlocked("readingMaze", { level: 2 }), "reading maze locked below level 3");
   console.assert(isModeUnlocked("readingMaze", { level: 3 }), "reading maze unlocks at level 3");
@@ -709,11 +733,13 @@ function GameLaunchCard({ game, progress, setMode, className = "" }) {
 
   const tone =
     game.category === "core"
-      ? game.id === "sounds"
-        ? "bg-pink-100"
-        : game.id === "build"
-          ? "bg-lime-100"
-          : "bg-violet-100"
+      ? game.id === "letterEcho"
+        ? "bg-sky-100"
+        : game.id === "sounds"
+          ? "bg-pink-100"
+          : game.id === "build"
+            ? "bg-lime-100"
+            : "bg-violet-100"
       : game.id === "readingMaze"
         ? "bg-indigo-100"
         : game.id === "miniGames"
@@ -1368,7 +1394,178 @@ function BadgeToast({ badge }) {
   );
 }
 
-function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celebrationFrequency }) {
+function PhonicsAudioToggle({ enabled, onToggle, disabled = false, className = "" }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => onToggle(!enabled)}
+      className={`rq-button rounded-full border-2 border-slate-900 px-4 py-2 text-sm font-black shadow-[0_3px_0_rgba(15,23,42,1)] disabled:opacity-50 ${enabled ? "bg-white" : "bg-slate-200"} ${className}`}
+      aria-label={enabled ? "Turn phonics audio off" : "Turn phonics audio on"}
+    >
+      {enabled ? "🔊 Audio on" : "🔇 Audio off"}
+    </button>
+  );
+}
+
+function LetterLessonScript({ letterObj, className = "" }) {
+  const lines = buildLetterLessonLines(letterObj);
+  return (
+    <div className={`rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-left ${className}`}>
+      <p className="text-xs font-black uppercase tracking-wide text-slate-500">Repeat after me</p>
+      {lines.map((line) => (
+        <p key={line} className="mt-1 text-lg font-bold text-slate-700">
+          {line}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function LetterEchoGame({
+  logWin,
+  logAttempt,
+  playerLevel,
+  activeReadingLevel,
+  celebrationFrequency,
+  phonicsAudioEnabled,
+  onPhonicsAudioChange,
+}) {
+  const sessionRef = useRef(createGameSession());
+  const correctCountRef = useRef(0);
+  const [sessionTick, setSessionTick] = useState(0);
+  const progressSlice = useMemo(
+    () => ({ level: playerLevel, settings: { activeReadingLevel } }),
+    [playerLevel, activeReadingLevel]
+  );
+  const sessionStats = useMemo(() => sessionRef.current.getStats(), [sessionTick]);
+  const letterPool = useMemo(() => lettersForReadingDifficulty(progressSlice, sessionStats), [progressSlice, sessionStats]);
+  const poolOrFallback = useMemo(
+    () => (letterPool.length ? letterPool : LETTERS.filter((l) => l.level <= 1)),
+    [letterPool]
+  );
+  const pickLetter = () => sessionRef.current.pickFromPool(poolOrFallback, (l) => l.letter) || pickRandom(poolOrFallback);
+
+  const [target, setTarget] = useState(() => pickRandom(poolOrFallback));
+  const [result, setResult] = useState(null);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+
+  const roundTokenRef = useRef(0);
+  const targetRef = useRef(target);
+  targetRef.current = target;
+
+  useEffect(() => {
+    setTarget((t) => (poolOrFallback.some((l) => l.letter === t.letter) ? t : pickRandom(poolOrFallback)));
+  }, [poolOrFallback]);
+
+  useEffect(() => {
+    const token = ++roundTokenRef.current;
+    clearScheduledTimers();
+    if (!phonicsAudioEnabled) return () => clearScheduledTimers();
+
+    scheduleAudio(() => {
+      if (roundTokenRef.current !== token) return;
+      speakLetterLesson(targetRef.current, { enabled: true });
+    }, LETTER_ECHO_AUTO_PLAY_MS);
+
+    return () => clearScheduledTimers();
+  }, [target.letter, phonicsAudioEnabled]);
+
+  useEffect(() => () => clearScheduledAudio(), []);
+
+  const replayLesson = () => {
+    if (isTransitioning || !phonicsAudioEnabled) return;
+    cancelSpeech();
+    speakLetterLesson(target, { enabled: true });
+  };
+
+  const advance = () => {
+    if (isTransitioning) return;
+    logAttempt();
+    logWin("letterEcho");
+    correctCountRef.current += 1;
+    const speakPraise = shouldSpeakPraise({
+      correctCount: correctCountRef.current,
+      celebrationFrequency,
+    });
+    const praiseLine = speakPraise ? getPraiseLine() : null;
+    setIsTransitioning(true);
+    setResult(speakPraise ? { type: "good", text: praiseLine } : subtleCorrectResult());
+
+    let advanced = false;
+    const goNext = () => {
+      if (advanced) return;
+      advanced = true;
+      clearScheduledTimers();
+      cancelSpeech();
+      setTarget(pickLetter());
+      setResult(null);
+      setIsTransitioning(false);
+    };
+
+    const safetyId = scheduleAudio(goNext, TTS_FALLBACK_TOTAL_MS);
+    if (speakPraise && phonicsAudioEnabled) {
+      speakText(praiseLine, 0.78, () => {
+        cancelScheduledTimer(safetyId);
+        scheduleAudio(goNext, TTS_AFTER_PHRASE_GAP_MS);
+      });
+    } else {
+      scheduleAudio(() => setResult(null), 500);
+      cancelScheduledTimer(safetyId);
+      scheduleAudio(goNext, RIGHT_ANSWER_PAUSE_MS);
+    }
+  };
+
+  return (
+    <div className="rq-page mx-auto max-w-4xl px-4 pb-10">
+      <ResultToast result={result} />
+      <div className="rounded-[2rem] border-2 border-slate-900 bg-sky-100 p-5 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <p className="text-lg font-black text-slate-600">Letter Echo</p>
+          <PhonicsAudioToggle enabled={phonicsAudioEnabled} onToggle={onPhonicsAudioChange} disabled={isTransitioning} />
+        </div>
+        <h2 className="mt-2 text-3xl font-black sm:text-4xl">Repeat after me, then tap I said it!</h2>
+        <div className="mt-6 flex items-center justify-center gap-6">
+          <span className="text-8xl font-black sm:text-9xl">{letterUpper(target)}</span>
+          <span className="text-5xl font-black text-slate-400">and</span>
+          <span className="text-8xl font-black sm:text-9xl">{letterLower(target)}</span>
+        </div>
+        <p className="mt-4 text-5xl" aria-hidden>
+          {target.emoji}
+        </p>
+        {phonicsAudioEnabled ? (
+          <button
+            type="button"
+            onClick={replayLesson}
+            disabled={isTransitioning}
+            className="rq-button mx-auto mt-5 flex items-center gap-3 rounded-full border-2 border-slate-900 bg-white px-6 py-4 text-xl font-black shadow-[0_5px_0_rgba(15,23,42,1)] disabled:opacity-50"
+          >
+            <VolumeIcon className="text-2xl" /> Hear it again
+          </button>
+        ) : (
+          <LetterLessonScript letterObj={target} className="mx-auto mt-5 max-w-md" />
+        )}
+        <BigButton
+          onClick={advance}
+          disabled={isTransitioning}
+          className="mx-auto mt-6 max-w-sm bg-emerald-100 disabled:opacity-50"
+        >
+          <span className="text-3xl">I said it!</span>
+        </BigButton>
+      </div>
+    </div>
+  );
+}
+
+function SoundsGame({
+  logWin,
+  logAttempt,
+  playerLevel,
+  activeReadingLevel,
+  celebrationFrequency,
+  phonicsAudioEnabled,
+  onPhonicsAudioChange,
+}) {
   const sessionRef = useRef(createGameSession());
   const correctCountRef = useRef(0);
   const [sessionTick, setSessionTick] = useState(0);
@@ -1413,14 +1610,15 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
   useEffect(() => {
     const token = ++roundTokenRef.current;
     clearScheduledTimers();
+    if (!phonicsAudioEnabled) return () => clearScheduledTimers();
 
     scheduleAudio(() => {
       if (roundTokenRef.current !== token) return;
-      speakLetterSound(targetRef.current);
+      speakLetterSound(targetRef.current, true);
     }, SOUND_POP_AUTO_PLAY_MS);
 
     return () => clearScheduledTimers();
-  }, [target.letter]);
+  }, [target.letter, phonicsAudioEnabled]);
 
   useEffect(() => () => clearScheduledAudio(), []);
 
@@ -1434,10 +1632,24 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
   };
 
   const replayTargetSound = () => {
-    if (isTransitioning) return;
+    if (isTransitioning || !phonicsAudioEnabled) return;
     cancelSpeech();
-    speakLetterSound(target);
+    speakLetterSound(target, true);
   };
+
+  const replayLetterLesson = () => {
+    if (isTransitioning || !phonicsAudioEnabled) return;
+    cancelSpeech();
+    speakLetterLesson(target, { enabled: true });
+  };
+
+  const choiceDisplays = useMemo(() => {
+    const map = {};
+    choices.forEach((c) => {
+      map[c.letter] = letterChoiceDisplay(c.letter, `${target.letter}-${c.letter}`);
+    });
+    return map;
+  }, [choices, target.letter]);
 
   const choose = (choice) => {
     if (isTransitioning) return;
@@ -1483,7 +1695,7 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
       speakText(getGentleTryAgainLine(), 0.72, () => {
         scheduleAudio(() => {
           if (roundTokenRef.current !== tokenAtWrong) return;
-          speakLetterSound(targetRef.current);
+          if (phonicsAudioEnabled) speakLetterSound(targetRef.current, true);
         }, TTS_AFTER_PHRASE_GAP_MS);
       });
       scheduleAudio(() => setResult(null), 2200);
@@ -1494,21 +1706,47 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
     <div className="rq-page mx-auto max-w-4xl px-4 pb-10">
       <ResultToast result={result} />
       <div className="rounded-[2rem] border-2 border-slate-900 bg-white p-5 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
-        <p className="text-lg font-black text-slate-600">Sound Pop</p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <p className="text-lg font-black text-slate-600">Sound Pop</p>
+          <PhonicsAudioToggle enabled={phonicsAudioEnabled} onToggle={onPhonicsAudioChange} disabled={isTransitioning} />
+        </div>
         <h2 className="mt-2 text-4xl font-black">Listen, then tap the letter.</h2>
-        <button
-          type="button"
-          onClick={replayTargetSound}
-          disabled={isTransitioning}
-          className="rq-button mx-auto mt-5 flex items-center gap-3 rounded-full border-2 border-slate-900 bg-sky-100 px-6 py-4 text-2xl font-black shadow-[0_5px_0_rgba(15,23,42,1)] disabled:opacity-50"
-        >
-          <VolumeIcon className="text-3xl" /> Hear Sound Again
-        </button>
+        <div className="mt-4 flex items-center justify-center gap-4">
+          <span className="text-6xl font-black">{letterUpper(target)}</span>
+          <span className="text-2xl font-black text-slate-400">/</span>
+          <span className="text-6xl font-black">{letterLower(target)}</span>
+        </div>
+        {!phonicsAudioEnabled && (
+          <p className="mt-3 text-base font-bold text-slate-600">
+            Which letter makes the <strong>{target.sound}</strong> sound?
+          </p>
+        )}
+        {phonicsAudioEnabled && (
+          <>
+            <button
+              type="button"
+              onClick={replayTargetSound}
+              disabled={isTransitioning}
+              className="rq-button mx-auto mt-5 flex items-center gap-3 rounded-full border-2 border-slate-900 bg-sky-100 px-6 py-4 text-2xl font-black shadow-[0_5px_0_rgba(15,23,42,1)] disabled:opacity-50"
+            >
+              <VolumeIcon className="text-3xl" /> Hear Sound Again
+            </button>
+            <button
+              type="button"
+              onClick={replayLetterLesson}
+              disabled={isTransitioning}
+              className="rq-button mx-auto mt-3 rounded-full border-2 border-slate-900 bg-violet-100 px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
+            >
+              Hear letter lesson
+            </button>
+          </>
+        )}
+        {!phonicsAudioEnabled && <LetterLessonScript letterObj={target} className="mx-auto mt-4 max-w-md text-center" />}
         <button
           type="button"
           onClick={() => {
             setShowClue(true);
-            speak(target.clue);
+            if (phonicsAudioEnabled) speak(target.clue);
           }}
           disabled={isTransitioning}
           className="rq-button mx-auto mt-3 rounded-full border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
@@ -1520,8 +1758,8 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {choices.map((choice) => (
           <BigButton key={choice.letter} onClick={() => choose(choice)} disabled={isTransitioning} className="bg-amber-50 disabled:opacity-50">
-            <span className="block text-7xl uppercase">{choice.letter}</span>
-            <span className="block text-sm normal-case text-slate-500">tap the letter</span>
+            <span className="block text-7xl">{choiceDisplays[choice.letter]}</span>
+            <span className="block text-sm text-slate-500">tap the letter</span>
           </BigButton>
         ))}
       </div>
@@ -1529,7 +1767,15 @@ function SoundsGame({ logWin, logAttempt, playerLevel, activeReadingLevel, celeb
   );
 }
 
-function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, readingTheme, celebrationFrequency }) {
+function BuildWordGame({
+  logWin,
+  logAttempt,
+  playerLevel,
+  activeReadingLevel,
+  readingTheme,
+  celebrationFrequency,
+  phonicsAudioEnabled,
+}) {
   const sessionRef = useRef(createGameSession());
   const roundTokenRef = useRef(0);
   const correctCountRef = useRef(0);
@@ -1568,11 +1814,11 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
 
     scheduleAudio(() => {
       if (roundTokenRef.current !== token) return;
-      speakWholeWord(target);
+      if (phonicsAudioEnabled) speakWholeWord(target);
     }, BUILD_ROUND_INTRO_MS);
 
     return () => clearScheduledTimers();
-  }, [target.word]);
+  }, [target.word, phonicsAudioEnabled]);
 
   useEffect(() => () => clearScheduledTimers(), []);
 
@@ -1612,7 +1858,7 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
     cancelSpeech();
     scheduleAudio(() => {
       if (roundTokenRef.current !== tokenAt) return;
-      speakWholeWord(target);
+      if (phonicsAudioEnabled) speakWholeWord(target);
     }, 120);
   };
 
@@ -1624,7 +1870,7 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
     setShowClue(true);
     scheduleAudio(() => {
       if (roundTokenRef.current !== tokenAt) return;
-      speakPhonicsForParts(target.parts, tokenAt, roundTokenRef, undefined);
+      speakPhonicsForParts(target.parts, tokenAt, roundTokenRef, undefined, phonicsAudioEnabled);
     }, 400);
   };
 
@@ -1657,7 +1903,7 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
       }
       const ch = parts[step];
       const lo = LETTERS.find((l) => l.letter === ch);
-      speakText(lo?.say || ch, 0.58, () => {
+      const afterLetter = () => {
         if (roundTokenRef.current !== tokenAt) {
           setGiveUpRunning(false);
           return;
@@ -1665,7 +1911,14 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
         setBuilt(parts.slice(0, step + 1));
         step += 1;
         scheduleAudio(stepNext, BUILD_GIVE_UP_LETTER_MS);
-      });
+      };
+      if (lo && phonicsAudioEnabled) {
+        speakLetterLesson(lo, { enabled: true, onEnd: afterLetter });
+      } else if (lo) {
+        afterLetter();
+      } else {
+        speakText(ch, 0.58, afterLetter);
+      }
     };
 
     scheduleAudio(stepNext, 280);
@@ -1728,9 +1981,9 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
           {target.parts.map((part, i) => (
             <div
               key={i}
-              className={`grid h-20 w-20 place-items-center rounded-3xl border-2 border-slate-900 text-5xl font-black uppercase shadow-inner ${built[i] ? "rq-bounce bg-white" : "bg-lime-50"}`}
+              className={`grid h-20 w-20 place-items-center rounded-3xl border-2 border-slate-900 text-5xl font-black shadow-inner ${built[i] ? "rq-bounce bg-white" : "bg-lime-50"}`}
             >
-              {built[i] || "_"}
+              {built[i] ? letterCaseInWord(built[i], target.word) : "_"}
             </div>
           ))}
         </div>
@@ -1782,7 +2035,7 @@ function BuildWordGame({ logWin, logAttempt, playerLevel, activeReadingLevel, re
       <div className="mt-6 grid grid-cols-3 gap-4 sm:grid-cols-6">
         {choices.map((letter) => (
           <BigButton key={letter} onClick={() => choose(letter)} disabled={letterGridDisabled} className="bg-white disabled:opacity-50">
-            <span className="text-6xl uppercase">{letter}</span>
+            <span className="text-6xl">{letterCaseInWord(letter, target.word)}</span>
           </BigButton>
         ))}
       </div>
@@ -2352,6 +2605,27 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
             ))}
           </div>
         </div>
+        <div className="mt-4">
+          <p className="font-black text-slate-800">Phonics audio</p>
+          <p className="mt-1 text-sm font-semibold text-slate-600">Turn off so Octavia can practice letters quietly with you coaching. Applies to Letter Echo and Sound Pop.</p>
+          <button
+            type="button"
+            onClick={() =>
+              setProgress((old) => ({
+                ...old,
+                settings: {
+                  ...(old.settings || {}),
+                  phonicsAudioEnabled: !normalizePhonicsAudioEnabled(old.settings?.phonicsAudioEnabled),
+                },
+              }))
+            }
+            className={`rq-button mt-2 rounded-full border-2 border-slate-900 px-4 py-2 font-black shadow-[0_3px_0_rgba(15,23,42,1)] ${
+              normalizePhonicsAudioEnabled(progress.settings?.phonicsAudioEnabled) ? "bg-emerald-200" : "bg-slate-200"
+            }`}
+          >
+            {normalizePhonicsAudioEnabled(progress.settings?.phonicsAudioEnabled) ? "🔊 Audio on" : "🔇 Audio off"}
+          </button>
+        </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <StatCard icon={<VolumeIcon />} label="Letters in pool" value={filterByMaxLevel(LETTERS, clampLevel(progress.settings?.activeReadingLevel)).length} />
           <StatCard icon={<BookIcon />} label="Build-a-word pool" value={wordsForReadingLevel(clampLevel(progress.settings?.activeReadingLevel)).length} />
@@ -2664,6 +2938,7 @@ export default function App() {
   const activeMathLevel = clampLevel(progress.settings?.activeMathLevel);
   const readingTheme = progress.settings?.readingTheme === "bird" ? "bird" : "default";
   const celebrationFrequency = normalizeCelebrationFrequency(progress.settings?.celebrationFrequency);
+  const phonicsAudioEnabled = normalizePhonicsAudioEnabled(progress.settings?.phonicsAudioEnabled);
   const playerLevel = progress.level || 1;
 
   useEffect(() => {
@@ -2811,12 +3086,14 @@ export default function App() {
       const day = normalizeDayEntry(old.dailyLog[TODAY_KEY]);
       const totals = old.totals || {};
       const isBuildGiveUp = kind === "build" && meta.buildOutcome === "giveup";
+      const isLetterEcho = kind === "letterEcho";
       const wordsBuiltAdd = kind === "build" && !isBuildGiveUp ? 1 : 0;
       const helpedWordsAdd = kind === "build" && isBuildGiveUp ? 1 : 0;
-      const starAdd = isBuildGiveUp ? 0 : 1;
-      const correctAdd = isBuildGiveUp ? 0 : 1;
+      const starAdd = isBuildGiveUp || isLetterEcho ? 0 : 1;
+      const correctAdd = isBuildGiveUp || isLetterEcho ? 0 : 1;
       const add = {
         soundsCorrect: kind === "sounds" ? 1 : 0,
+        letterEchoCompleted: kind === "letterEcho" ? 1 : 0,
         wordsBuilt: wordsBuiltAdd,
         helpedWordsBuilt: helpedWordsAdd,
         sentencesRead: kind === "read" ? 1 : 0,
@@ -2842,6 +3119,7 @@ export default function App() {
             correct: day.correct + correctAdd,
             stars: day.stars + starAdd,
             soundsCorrect: day.soundsCorrect + add.soundsCorrect,
+            letterEchoCompleted: (Number(day.letterEchoCompleted) || 0) + add.letterEchoCompleted,
             wordsBuilt: day.wordsBuilt + add.wordsBuilt,
             helpedWordsBuilt: (Number(day.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
             sentencesRead: day.sentencesRead + add.sentencesRead,
@@ -2854,6 +3132,7 @@ export default function App() {
         totals: {
           ...totals,
           soundsCorrect: (Number(totals.soundsCorrect) || 0) + add.soundsCorrect,
+          letterEchoCompleted: (Number(totals.letterEchoCompleted) || 0) + add.letterEchoCompleted,
           wordsBuilt: (Number(totals.wordsBuilt) || 0) + add.wordsBuilt,
           helpedWordsBuilt: (Number(totals.helpedWordsBuilt) || 0) + add.helpedWordsBuilt,
           sentencesRead: (Number(totals.sentencesRead) || 0) + add.sentencesRead,
@@ -2874,6 +3153,13 @@ export default function App() {
     setMode("home");
   };
 
+  const setPhonicsAudioEnabled = (enabled) => {
+    updateProgress((old) => ({
+      ...old,
+      settings: { ...(old.settings || {}), phonicsAudioEnabled: Boolean(enabled) },
+    }));
+  };
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-amber-50 via-sky-50 to-pink-50 text-slate-950">
       <style>{STYLES}</style>
@@ -2881,6 +3167,17 @@ export default function App() {
       <BadgeToast badge={newBadge} />
       <div key={mode}>
         {mode === "home" && <Home setMode={setMode} progress={progress} />}
+        {mode === "letterEcho" && (
+          <LetterEchoGame
+            logWin={logWin}
+            logAttempt={logAttempt}
+            playerLevel={playerLevel}
+            activeReadingLevel={activeReadingLevel}
+            celebrationFrequency={celebrationFrequency}
+            phonicsAudioEnabled={phonicsAudioEnabled}
+            onPhonicsAudioChange={setPhonicsAudioEnabled}
+          />
+        )}
         {mode === "sounds" && (
           <SoundsGame
             logWin={logWin}
@@ -2888,6 +3185,8 @@ export default function App() {
             playerLevel={playerLevel}
             activeReadingLevel={activeReadingLevel}
             celebrationFrequency={celebrationFrequency}
+            phonicsAudioEnabled={phonicsAudioEnabled}
+            onPhonicsAudioChange={setPhonicsAudioEnabled}
           />
         )}
         {mode === "build" && (
@@ -2898,6 +3197,7 @@ export default function App() {
             activeReadingLevel={activeReadingLevel}
             readingTheme={readingTheme}
             celebrationFrequency={celebrationFrequency}
+            phonicsAudioEnabled={phonicsAudioEnabled}
           />
         )}
         {mode === "read" && (

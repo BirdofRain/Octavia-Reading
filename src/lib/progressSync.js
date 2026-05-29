@@ -43,6 +43,7 @@ function mergeDayEntries(a, b) {
     correct: Math.max(Number(a.correct) || 0, Number(b.correct) || 0),
     attempts: Math.max(Number(a.attempts) || 0, Number(b.attempts) || 0),
     soundsCorrect: Math.max(Number(a.soundsCorrect) || 0, Number(b.soundsCorrect) || 0),
+    letterEchoCompleted: Math.max(Number(a.letterEchoCompleted) || 0, Number(b.letterEchoCompleted) || 0),
     wordsBuilt: Math.max(Number(a.wordsBuilt) || 0, Number(b.wordsBuilt) || 0),
     helpedWordsBuilt: Math.max(Number(a.helpedWordsBuilt) || 0, Number(b.helpedWordsBuilt) || 0),
     mazeCompleted: Math.max(Number(a.mazeCompleted) || 0, Number(b.mazeCompleted) || 0),
@@ -99,11 +100,18 @@ export function mergeProgressUnion(primary, secondary) {
         primary.settings?.readingTheme === "bird" || secondary.settings?.readingTheme === "bird" ? "bird" : "default",
       teacherFocus: primary.settings?.teacherFocus ?? secondary.settings?.teacherFocus ?? "mixed",
       teacherDifficulty: primary.settings?.teacherDifficulty ?? secondary.settings?.teacherDifficulty ?? "auto",
+      celebrationFrequency: primary.settings?.celebrationFrequency ?? secondary.settings?.celebrationFrequency ?? "calm",
+      phonicsAudioEnabled:
+        primary.settings?.phonicsAudioEnabled !== false && secondary.settings?.phonicsAudioEnabled !== false,
     },
     totals: {
       ...(secondary.totals || {}),
       ...(primary.totals || {}),
       soundsCorrect: Math.max(Number(primary.totals?.soundsCorrect) || 0, Number(secondary.totals?.soundsCorrect) || 0),
+      letterEchoCompleted: Math.max(
+        Number(primary.totals?.letterEchoCompleted) || 0,
+        Number(secondary.totals?.letterEchoCompleted) || 0
+      ),
       wordsBuilt: Math.max(Number(primary.totals?.wordsBuilt) || 0, Number(secondary.totals?.wordsBuilt) || 0),
       helpedWordsBuilt: Math.max(Number(primary.totals?.helpedWordsBuilt) || 0, Number(secondary.totals?.helpedWordsBuilt) || 0),
       mazeCompleted: Math.max(Number(primary.totals?.mazeCompleted) || 0, Number(secondary.totals?.mazeCompleted) || 0),

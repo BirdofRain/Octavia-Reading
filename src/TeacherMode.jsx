@@ -211,6 +211,7 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
         <h2 className="text-xl font-black">Quick launch</h2>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {[
+            { mode: "letterEcho", label: "Letter Echo", emoji: "🗣️" },
             { mode: "sounds", label: "Sound Pop", emoji: "🔊" },
             { mode: "build", label: "Build a Word", emoji: "🧱" },
             { mode: "read", label: "Read It", emoji: "📖" },

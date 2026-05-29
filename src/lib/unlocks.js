@@ -22,6 +22,15 @@ import { resolveDifficultyBand } from "./difficulty.js";
 
 export const UNLOCKABLE_GAMES = [
   {
+    id: "letterEcho",
+    mode: "letterEcho",
+    title: "Letter Echo",
+    emoji: "🗣️",
+    blurb: "Repeat after me — learn each letter, uppercase and lowercase.",
+    unlockLevel: 1,
+    category: "core",
+  },
+  {
     id: "sounds",
     mode: "sounds",
     title: "Sound Pop",
