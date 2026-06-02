@@ -43,7 +43,6 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
       const outcome = await onImportProgress(result.data);
       setImportStatus(outcome?.message || "Progress imported and saved.");
       setImportText("");
-      setShowImport(false);
     } catch (e) {
       setImportError(e?.message || "Import failed.");
     } finally {
@@ -122,6 +121,12 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
         </div>
       )}
 
+      {importStatus && !showImport && (
+        <p className="mt-4 rounded-2xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-950">
+          {importStatus}
+        </p>
+      )}
+
       {showImport && (
         <div className="mt-4 rounded-2xl border-2 border-amber-700 bg-amber-50 p-4">
           <p className="font-black text-amber-950">Warning</p>
@@ -136,7 +141,11 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
             className="mt-3 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2 font-mono text-xs leading-relaxed"
           />
           {importError && <p className="mt-2 text-sm font-bold text-red-700">{importError}</p>}
-          {importStatus && <p className="mt-2 text-sm font-bold text-emerald-800">{importStatus}</p>}
+          {importStatus && (
+            <p className="mt-3 rounded-xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-950">
+              {importStatus}
+            </p>
+          )}
           <button
             type="button"
             onClick={handleImport}

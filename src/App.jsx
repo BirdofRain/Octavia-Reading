@@ -73,6 +73,7 @@ import {
   getProgressSaveModeLabel,
 } from "./lib/progressTransfer.js";
 import { touchProgressUpdatedAt, getCloudSyncStatus, isBlankProgress, wouldCauseProgressLoss } from "./lib/progressSync.js";
+import { honorParentProgressFields } from "./lib/progressRepair.js";
 import { createProgressBackup, listProgressBackups } from "./lib/progressBackup.js";
 import { ParentProgressTools } from "./ParentProgressTools.jsx";
 
@@ -568,6 +569,8 @@ function runSelfTests() {
   const backup = createProgressBackup({ lifetimeStars: 5, stars: 3, badges: ["first_star"], correct: 5, dailyLog: {} });
   console.assert(backup.ok && backup.key.startsWith("ltr_progress_backup_"), "backup should use ltr_progress_backup prefix");
   console.assert(listProgressBackups().some((b) => b.key === backup.key), "backup should appear in list");
+  const leveledImport = honorParentProgressFields({ level: 3, lifetimeStars: 0, correct: 0 });
+  console.assert(leveledImport.lifetimeStars >= 25, "import with level should map to XP for that level");
   console.assert(isModeUnlocked("letterEcho", { level: 1 }), "level 1 unlocks letter echo");
   console.assert(isModeUnlocked("sounds", { level: 1 }), "level 1 unlocks sounds");
   console.assert(!isModeUnlocked("readingMaze", { level: 2 }), "reading maze locked below level 3");
@@ -3098,26 +3101,37 @@ export default function App() {
     }
   };
 
-  const applyProgressAndSync = async (nextProgress, { allowReset = false } = {}) => {
-    const migrated = awardBadges(migrateProgress(typeof nextProgress === "object" ? nextProgress : {}));
+  const applyProgressAndSync = async (nextProgress, { allowReset = false, forceParentOverride = false } = {}) => {
+    let prepared = typeof nextProgress === "object" && nextProgress ? { ...nextProgress } : {};
+    if (forceParentOverride) {
+      prepared = honorParentProgressFields(prepared);
+    }
+    const migrated = awardBadges(migrateProgress(prepared));
     userEarnedProgressRef.current = true;
     setProgress(migrated);
+    let syncError = null;
     if (supabaseConfigured && authEmail) {
       setSyncStatus("syncing");
       try {
         const saved = await saveCloudProgress(migrated, {
           cloudLoadCompleted: cloudLoadCompletedRef.current,
           allowReset,
+          skipReconcile: forceParentOverride || allowReset,
         });
-        if (saved?.progress) setProgress(saved.progress);
+        if (saved?.skipped && saved.reason === "cloud_load_pending") {
+          syncError = "Cloud sync is still loading — saved on this device only.";
+        } else if (saved?.progress) {
+          setProgress(saved.progress);
+        }
         setSyncStatus(saved?.conflictResolved ? "conflict" : "saved");
         window.setTimeout(() => setSyncStatus("signed_in"), saved?.conflictResolved ? 5000 : 2000);
       } catch (e) {
         console.error(e);
+        syncError = e?.message || "Cloud sync failed — saved on this device.";
         setSyncStatus("error");
       }
     }
-    return migrated;
+    return { progress: migrated, syncError };
   };
 
   const handleResetDeviceOnly = async () => {
@@ -3328,11 +3342,15 @@ export default function App() {
               syncStatus,
             }}
             onImportProgress={async (raw) => {
-              await applyProgressAndSync(raw);
+              const { progress: saved, syncError } = await applyProgressAndSync(raw, { forceParentOverride: true });
+              const levelLine = `Level ${saved.level} (${saved.levelTitle}) — ${saved.lifetimeStars} lifetime stars, ${saved.correct} correct.`;
+              if (syncError) {
+                return { message: `Progress imported on this device. ${levelLine} ${syncError}` };
+              }
               return {
                 message: authEmail
-                  ? "Progress imported, migrated, and saved to this device and cloud."
-                  : "Progress imported and saved on this device.",
+                  ? `Progress imported and synced to cloud. ${levelLine}`
+                  : `Progress imported on this device. ${levelLine}`,
               };
             }}
             onApplyProgress={applyProgressAndSync}

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { BADGE_CATALOG } from "./data/badges.js";
 import {
   createProgressBackup,
@@ -22,16 +22,26 @@ export function ParentProgressTools({
   const [pinUnlocked, setPinUnlocked] = useState(!pinGate);
   const [resetConfirm, setResetConfirm] = useState("");
   const [cloudResetUnlocked, setCloudResetUnlocked] = useState(false);
-  const [backupMessage, setBackupMessage] = useState(null);
+  const [statusMessage, setStatusMessage] = useState(null);
+  const [statusTone, setStatusTone] = useState("success");
   const [restoreKey, setRestoreKey] = useState("");
   const [restorePreview, setRestorePreview] = useState(null);
   const [repairLifetime, setRepairLifetime] = useState(String(progress.lifetimeStars ?? ""));
   const [repairSpendable, setRepairSpendable] = useState(String(progress.stars ?? ""));
   const [repairCorrect, setRepairCorrect] = useState(String(progress.correct ?? ""));
+  const [repairTargetLevel, setRepairTargetLevel] = useState(String(progress.level ?? ""));
   const [repairBadges, setRepairBadges] = useState(new Set(progress.badges || []));
-  const [repairSaved, setRepairSaved] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
 
-  const backups = useMemo(() => listProgressBackups(), [backupMessage, progress.updatedAt]);
+  const backups = useMemo(() => listProgressBackups(), [statusMessage, progress.updatedAt]);
+
+  useEffect(() => {
+    setRepairLifetime(String(progress.lifetimeStars ?? ""));
+    setRepairSpendable(String(progress.stars ?? ""));
+    setRepairCorrect(String(progress.correct ?? ""));
+    setRepairTargetLevel(String(progress.level ?? ""));
+    setRepairBadges(new Set(progress.badges || []));
+  }, [progress.lifetimeStars, progress.stars, progress.correct, progress.level, progress.badges, progress.updatedAt]);
 
   if (pinGate && !pinUnlocked) {
     return (
@@ -62,9 +72,10 @@ export function ParentProgressTools({
     );
   }
 
-  const flash = (msg) => {
-    setBackupMessage(msg);
-    window.setTimeout(() => setBackupMessage(null), 4000);
+  const flash = (msg, tone = "success") => {
+    setStatusMessage(msg);
+    setStatusTone(tone);
+    window.setTimeout(() => setStatusMessage(null), 6000);
   };
 
   const handlePreviewBackup = (key) => {
@@ -74,7 +85,7 @@ export function ParentProgressTools({
       setRestorePreview(result.preview);
     } else {
       setRestorePreview(null);
-      flash(result.error || "Could not read backup");
+      flash(result.error || "Could not read backup", "error");
     }
   };
 
@@ -82,23 +93,42 @@ export function ParentProgressTools({
     if (!restoreKey) return;
     const result = getBackupPreview(restoreKey, getStreak);
     if (!result.ok) {
-      flash(result.error || "Could not restore backup");
+      flash(result.error || "Could not restore backup", "error");
       return;
     }
-    await onApplyProgress(result.progress, { restore: true });
-    flash("Backup restored and synced.");
+    try {
+      const { progress: saved, syncError } = await onApplyProgress(result.progress, { forceParentOverride: true });
+      flash(
+        syncError
+          ? `Backup restored on this device. Level ${saved.level}. ${syncError}`
+          : `Backup restored — Level ${saved.level}, ${saved.lifetimeStars} lifetime stars.`
+      );
+    } catch (e) {
+      flash(e?.message || "Restore failed", "error");
+    }
   };
 
   const handleRepairSave = async () => {
-    const repaired = applyProgressRepair(progress, {
-      lifetimeStars: repairLifetime,
-      stars: repairSpendable,
-      correct: repairCorrect,
-      badgeIds: Array.from(repairBadges),
-    });
-    await onApplyProgress(repaired, { repair: true });
-    setRepairSaved(true);
-    window.setTimeout(() => setRepairSaved(false), 2000);
+    setRepairBusy(true);
+    try {
+      const repaired = applyProgressRepair(progress, {
+        lifetimeStars: repairLifetime,
+        stars: repairSpendable,
+        correct: repairCorrect,
+        targetLevel: repairTargetLevel,
+        badgeIds: Array.from(repairBadges),
+      });
+      const { progress: saved, syncError } = await onApplyProgress(repaired, { forceParentOverride: true });
+      flash(
+        syncError
+          ? `Saved on this device — Level ${saved.level} (${saved.levelTitle}). ${syncError}`
+          : `Saved — Level ${saved.level} (${saved.levelTitle}), ${saved.lifetimeStars} lifetime stars, ${saved.stars} spendable.`
+      );
+    } catch (e) {
+      flash(e?.message || "Could not save repair", "error");
+    } finally {
+      setRepairBusy(false);
+    }
   };
 
   const toggleBadge = (id) => {
@@ -112,31 +142,31 @@ export function ParentProgressTools({
 
   const handleResetDevice = async () => {
     if (resetConfirm !== "RESET") {
-      flash('Type RESET in the box to confirm.');
+      flash('Type RESET in the box to confirm.', "error");
       return;
     }
     const backup = createProgressBackup(progress);
     if (!backup.ok) {
-      flash(backup.error || "Could not create backup");
+      flash(backup.error || "Could not create backup", "error");
       return;
     }
     await onResetDeviceOnly();
-    flash(`Backup created (${backup.key.replace("ltr_progress_backup_", "").replace(/_/g, "-")}). Device reset complete.`);
+    flash(`Backup created. Device reset complete.`);
     setResetConfirm("");
   };
 
   const handleResetEverywhere = async () => {
     if (resetConfirm !== "RESET") {
-      flash('Type RESET in the box to confirm.');
+      flash('Type RESET in the box to confirm.', "error");
       return;
     }
     if (!cloudResetUnlocked) {
-      flash("Enable “Reset cloud progress too” in Admin first.");
+      flash("Enable “Reset cloud progress too” in Admin first.", "error");
       return;
     }
     const backup = createProgressBackup(progress);
     if (!backup.ok) {
-      flash(backup.error || "Could not create backup");
+      flash(backup.error || "Could not create backup", "error");
       return;
     }
     await onResetEverywhere();
@@ -144,11 +174,16 @@ export function ParentProgressTools({
     setResetConfirm("");
   };
 
+  const statusStyles =
+    statusTone === "error"
+      ? "border-red-700 bg-red-100 text-red-950"
+      : "border-emerald-700 bg-emerald-100 text-emerald-950";
+
   return (
     <>
-      {backupMessage && (
-        <div className="mt-6 rounded-2xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 font-bold text-emerald-950">
-          {backupMessage}
+      {statusMessage && (
+        <div className={`mt-6 rounded-2xl border-2 px-4 py-3 font-bold ${statusStyles}`}>
+          {statusMessage}
         </div>
       )}
 
@@ -195,9 +230,19 @@ export function ParentProgressTools({
       <section className="mt-6 rounded-[2rem] border-2 border-slate-900 bg-amber-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
         <h2 className="text-2xl font-black">Repair progress</h2>
         <p className="mt-1 font-semibold text-slate-600">
-          Fix stars, XP, or badges manually. Player level is calculated from lifetime stars and correct count — set those to adjust level.
+          Set target level, lifetime stars, or correct count. Changes save to this device and sync to cloud.
         </p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="block">
+            <span className="text-sm font-black">Target level (1–10+)</span>
+            <input
+              type="number"
+              min="1"
+              value={repairTargetLevel}
+              onChange={(e) => setRepairTargetLevel(e.target.value)}
+              className="mt-1 w-full rounded-xl border-2 border-slate-900 px-3 py-2 font-bold"
+            />
+          </label>
           <label className="block">
             <span className="text-sm font-black">Lifetime stars</span>
             <input
@@ -230,7 +275,7 @@ export function ParentProgressTools({
           </label>
         </div>
         <p className="mt-2 text-sm font-semibold text-slate-600">
-          Current level: <strong>{progress.level || 1}</strong> ({progress.levelTitle || "—"}) — derived from XP, not stored directly.
+          Current: Level <strong>{progress.level || 1}</strong> ({progress.levelTitle || "—"}), {progress.lifetimeStars ?? 0} lifetime stars.
         </p>
         <p className="mt-4 font-black text-slate-800">Badges</p>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -254,9 +299,10 @@ export function ParentProgressTools({
         <button
           type="button"
           onClick={handleRepairSave}
-          className="rq-button mt-4 rounded-2xl border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
+          disabled={repairBusy}
+          className="rq-button mt-4 rounded-2xl border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
         >
-          {repairSaved ? "Saved & syncing!" : "Save repair & sync to cloud"}
+          {repairBusy ? "Saving…" : "Save repair & sync to cloud"}
         </button>
       </section>
 
