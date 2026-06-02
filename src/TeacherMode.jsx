@@ -10,8 +10,23 @@ import {
 } from "./lib/teacherMode.js";
 import { ProgressTransferPanel } from "./ProgressTransferPanel.jsx";
 import { getCloudSyncStatus } from "./lib/progressSync.js";
+import { ParentProgressTools } from "./ParentProgressTools.jsx";
 
-export function TeacherMode({ progress, setProgress, setMode, todayKey, normalizeDayEntry, cloud, onImportProgress }) {
+export function TeacherMode({
+  progress,
+  setProgress,
+  setMode,
+  todayKey,
+  normalizeDayEntry,
+  cloud,
+  onImportProgress,
+  onApplyProgress,
+  onResetDeviceOnly,
+  onResetEverywhere,
+  getStreak,
+  adminPin,
+  adminPinWords,
+}) {
   const today = normalizeDayEntry(progress.dailyLog[todayKey]);
   const recommendation = getTeacherRecommendation(today, progress);
   const [note, setNote] = useState(today.notes || "");
@@ -74,7 +89,8 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
     saving: "bg-sky-100 text-sky-950",
     offline: "bg-slate-200 text-slate-900",
     unconfigured: "bg-slate-200 text-slate-900",
-    error: "bg-red-100 text-red-950",
+    error: "bg-amber-100 text-amber-950",
+    conflict: "bg-violet-100 text-violet-950",
   };
 
   return (
@@ -187,6 +203,18 @@ export function TeacherMode({ progress, setProgress, setMode, todayKey, normaliz
       </section>
 
       <ProgressTransferPanel progress={progress} cloud={cloud} onImportProgress={onImportProgress} />
+
+      <ParentProgressTools
+        progress={progress}
+        onApplyProgress={onApplyProgress}
+        onResetDeviceOnly={onResetDeviceOnly}
+        onResetEverywhere={onResetEverywhere}
+        getStreak={getStreak}
+        pinGate
+        adminPin={adminPin}
+        adminPinWords={adminPinWords}
+        allowCloudResetUnlock={false}
+      />
 
       <section className="mt-6 rounded-[2rem] border-2 border-slate-900 bg-amber-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
         <h2 className="text-2xl font-black">Daily note</h2>

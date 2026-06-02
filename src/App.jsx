@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   reconcileProgress,
+  reconcileProgressWithMeta,
   loadCloudProgress,
   saveCloudProgress,
   signInWithEmail,
@@ -9,6 +10,7 @@ import {
   supabase,
   supabaseConfigured,
   runCloudSyncSelfTests,
+  hasMeaningfulProgress,
 } from "./lib/cloudProgress.js";
 import { LETTERS, WORD_FAMILIES, lettersForReadingDifficulty, buildLetterLessonLines, letterChoiceDisplay, letterCaseInWord, letterUpper, letterLower } from "./data/phonics.js";
 import {
@@ -70,7 +72,9 @@ import {
   parseProgressImportText,
   getProgressSaveModeLabel,
 } from "./lib/progressTransfer.js";
-import { touchProgressUpdatedAt, getCloudSyncStatus } from "./lib/progressSync.js";
+import { touchProgressUpdatedAt, getCloudSyncStatus, isBlankProgress, wouldCauseProgressLoss } from "./lib/progressSync.js";
+import { createProgressBackup, listProgressBackups } from "./lib/progressBackup.js";
+import { ParentProgressTools } from "./ParentProgressTools.jsx";
 
 const APP_VERSION = "1.5-player-levels";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
@@ -107,11 +111,6 @@ const StarIcon = ({ className = "" }) => (
 const VolumeIcon = ({ className = "" }) => (
   <Icon className={className} label="sound">
     🔊
-  </Icon>
-);
-const ResetIcon = ({ className = "" }) => (
-  <Icon className={className} label="reset">
-    ↻
   </Icon>
 );
 const SparklesIcon = ({ className = "" }) => (
@@ -558,7 +557,17 @@ function runSelfTests() {
   console.assert(parseProgressImportText('{"stars":3,"dailyLog":{}}').ok, "import should accept minimal valid progress");
   console.assert(getProgressSaveModeLabel({ configured: false }).id === "local", "unconfigured cloud should be local only");
   console.assert(getProgressSaveModeLabel({ configured: true, authEmail: "a@b.c", syncStatus: "saved" }).label === "Saved", "signed in saved should show Saved");
-  console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "syncing" }).label === "Saving", "syncing should show Saving");
+  console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "syncing" }).label === "Saving…", "syncing should show Saving…");
+  console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "saved" }).label === "Synced", "saved should show Synced");
+  console.assert(isBlankProgress({ lifetimeStars: 0, correct: 0, badges: [] }), "blank progress detection");
+  console.assert(!isBlankProgress({ lifetimeStars: 1, correct: 0, badges: [] }), "one star is not blank");
+  console.assert(
+    wouldCauseProgressLoss({ lifetimeStars: 0, badges: [] }, { lifetimeStars: 10, badges: ["first_star"] }),
+    "blank incoming should not overwrite cloud"
+  );
+  const backup = createProgressBackup({ lifetimeStars: 5, stars: 3, badges: ["first_star"], correct: 5, dailyLog: {} });
+  console.assert(backup.ok && backup.key.startsWith("ltr_progress_backup_"), "backup should use ltr_progress_backup prefix");
+  console.assert(listProgressBackups().some((b) => b.key === backup.key), "backup should appear in list");
   console.assert(isModeUnlocked("letterEcho", { level: 1 }), "level 1 unlocks letter echo");
   console.assert(isModeUnlocked("sounds", { level: 1 }), "level 1 unlocks sounds");
   console.assert(!isModeUnlocked("readingMaze", { level: 2 }), "reading maze locked below level 3");
@@ -647,7 +656,7 @@ function ProgressStars({ stars }) {
   );
 }
 
-function Header({ setMode, progress, reset }) {
+function Header({ setMode, progress }) {
   const streak = getStreak(progress.dailyLog);
   return (
     <div className="sticky top-0 z-20 mb-4 rounded-b-3xl border-b-2 border-slate-900 bg-amber-100/95 px-4 py-3 shadow-lg backdrop-blur">
@@ -674,9 +683,6 @@ function Header({ setMode, progress, reset }) {
           </button>
           <button onClick={() => setMode("admin")} className="rq-button rounded-2xl border-2 border-slate-900 bg-white p-3 shadow-[0_4px_0_rgba(15,23,42,1)]" aria-label="Parent admin">
             <SettingsIcon className="text-xl" />
-          </button>
-          <button onClick={reset} className="rq-button rounded-2xl border-2 border-slate-900 bg-white p-3 shadow-[0_4px_0_rgba(15,23,42,1)]" aria-label="Reset game">
-            <ResetIcon className="text-xl" />
           </button>
         </div>
       </div>
@@ -2245,11 +2251,7 @@ function StatCard({ icon, label, value }) {
   );
 }
 
-function cloudSyncStatusLabel(configured, authEmail, syncStatus) {
-  return getCloudSyncStatus({ configured, authEmail, syncStatus }).label;
-}
-
-function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud }) {
+function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, onApplyProgress, onResetDeviceOnly, onResetEverywhere }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [adminLoginEmail, setAdminLoginEmail] = useState("");
@@ -2473,12 +2475,6 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
     }));
   };
 
-  const resetAllProgress = () => {
-    const ok = window.confirm("FULL RESET: erase all local progress, stars, badges, rewards, and daily logs on this device?");
-    if (!ok) return;
-    setProgress(syncProgression(defaultProgress()));
-  };
-
   if (!unlocked) {
     return (
       <div className="rq-page mx-auto max-w-xl px-4 pb-10">
@@ -2638,9 +2634,18 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-sky-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
         <h3 className="text-2xl font-black">Family account &amp; cloud sync</h3>
-        <p className="mt-2 font-bold text-slate-800">
-          Status: <span className="font-black">{cloudSyncStatusLabel(cloud.configured, cloud.authEmail, cloud.syncStatus)}</span>
-        </p>
+        {(() => {
+          const sync = getCloudSyncStatus(cloud);
+          return (
+            <div className={`mt-3 inline-flex flex-col rounded-2xl border-2 border-slate-900 px-4 py-2 ${
+              sync.id === "saved" ? "bg-emerald-100" : sync.id === "saving" ? "bg-sky-100" : sync.id === "conflict" ? "bg-violet-100" : "bg-slate-100"
+            }`}>
+              <span className="text-xs font-black uppercase tracking-wide">Sync status</span>
+              <span className="text-lg font-black">{sync.label}</span>
+              <span className="text-sm font-semibold">{sync.detail}</span>
+            </div>
+          );
+        })()}
         {!cloud.configured && (
           <p className="mt-2 text-sm font-semibold text-slate-600">Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to <code className="rounded bg-white px-1">.env.local</code>, then restart the dev server.</p>
         )}
@@ -2834,12 +2839,20 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud })
             🔥 Remove streak badges only
             <span className="block text-sm font-bold text-slate-600">Clears old daily logs and removes 2-day/5-day badges so they can be earned later.</span>
           </button>
-          <button onClick={resetAllProgress} className="rq-button rounded-2xl border-2 border-slate-900 bg-rose-200 px-4 py-3 text-left font-black shadow-[0_3px_0_rgba(15,23,42,1)]">
-            🧹 Full local reset
-            <span className="block text-sm font-bold text-slate-700">Only use if you want to wipe everything on this device.</span>
-          </button>
         </div>
       </div>
+
+      <ParentProgressTools
+        progress={progress}
+        onApplyProgress={onApplyProgress}
+        onResetDeviceOnly={onResetDeviceOnly}
+        onResetEverywhere={onResetEverywhere}
+        getStreak={getStreak}
+        pinGate={false}
+        adminPin={ADMIN_PIN}
+        adminPinWords={ADMIN_PIN_WORDS}
+        allowCloudResetUnlock
+      />
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-white p-5">
         <h3 className="text-2xl font-black">Badge board</h3>
@@ -2925,6 +2938,8 @@ export default function App() {
   const [newBadge, setNewBadge] = useState(null);
   const [authEmail, setAuthEmail] = useState(null);
   const [syncStatus, setSyncStatus] = useState("offline");
+  const cloudLoadCompletedRef = useRef(!supabaseConfigured);
+  const userEarnedProgressRef = useRef(false);
   const [progress, setProgress] = useState(() => {
     try {
       const saved = localStorage.getItem("octavia-reading-quest-progress");
@@ -2963,26 +2978,41 @@ export default function App() {
       if (event === "SIGNED_OUT" || !session?.user) {
         setAuthEmail(null);
         setSyncStatus("offline");
+        cloudLoadCompletedRef.current = true;
         return;
       }
 
       setAuthEmail(session.user.email ?? "");
 
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN") {
+        cloudLoadCompletedRef.current = false;
         void (async () => {
           setSyncStatus("syncing");
           try {
             const row = await loadCloudProgress();
-            const merged = awardBadges(
-              reconcileProgress(progressRef.current, row?.progress, row?.serverUpdatedAt)
+            const { progress: merged, conflictResolved } = reconcileProgressWithMeta(
+              progressRef.current,
+              row?.progress,
+              row?.serverUpdatedAt
             );
-            setProgress(merged);
-            const saved = await saveCloudProgress(merged);
+            const withBadges = awardBadges(merged);
+            setProgress(withBadges);
+            cloudLoadCompletedRef.current = true;
+            const saved = await saveCloudProgress(withBadges, {
+              cloudLoadCompleted: true,
+              allowReset: false,
+            });
             if (saved?.progress) setProgress(saved.progress);
-            setSyncStatus("saved");
-            window.setTimeout(() => setSyncStatus("signed_in"), 2000);
+            if (saved?.conflictResolved || conflictResolved) {
+              setSyncStatus("conflict");
+              window.setTimeout(() => setSyncStatus("signed_in"), 5000);
+            } else {
+              setSyncStatus("saved");
+              window.setTimeout(() => setSyncStatus("signed_in"), 2000);
+            }
           } catch (e) {
             console.error(e);
+            cloudLoadCompletedRef.current = true;
             setSyncStatus("error");
           }
         })();
@@ -2994,11 +3024,26 @@ export default function App() {
 
   useEffect(() => {
     if (!supabaseConfigured || !authEmail) return undefined;
+    if (!cloudLoadCompletedRef.current) return undefined;
+
+    const current = progressRef.current;
+    if (!userEarnedProgressRef.current && !hasMeaningfulProgress(current)) {
+      return undefined;
+    }
 
     const id = window.setTimeout(async () => {
-      setSyncStatus((s) => (s === "error" ? s : "syncing"));
+      setSyncStatus((s) => (s === "error" || s === "conflict" ? s : "syncing"));
       try {
-        await saveCloudProgress(progressRef.current);
+        const result = await saveCloudProgress(progressRef.current, {
+          cloudLoadCompleted: cloudLoadCompletedRef.current,
+        });
+        if (result?.skipped && result.reason === "cloud_load_pending") return;
+        if (result?.conflictResolved) {
+          setSyncStatus("conflict");
+          window.setTimeout(() => setSyncStatus((prev) => (prev === "conflict" ? "signed_in" : prev)), 5000);
+          return;
+        }
+        if (result?.progress) setProgress(result.progress);
         setSyncStatus("saved");
         window.setTimeout(() => setSyncStatus((prev) => (prev === "saved" ? "signed_in" : prev)), 2000);
       } catch (e) {
@@ -3030,14 +3075,22 @@ export default function App() {
     setSyncStatus("syncing");
     try {
       const row = await loadCloudProgress();
-      const merged = awardBadges(
-        reconcileProgress(progressRef.current, row?.progress, row?.serverUpdatedAt)
+      const { progress: merged, conflictResolved } = reconcileProgressWithMeta(
+        progressRef.current,
+        row?.progress,
+        row?.serverUpdatedAt
       );
-      setProgress(merged);
-      const saved = await saveCloudProgress(merged);
+      const withBadges = awardBadges(merged);
+      setProgress(withBadges);
+      const saved = await saveCloudProgress(withBadges, { cloudLoadCompleted: true });
       if (saved?.progress) setProgress(saved.progress);
-      setSyncStatus("saved");
-      window.setTimeout(() => setSyncStatus("signed_in"), 2000);
+      if (saved?.conflictResolved || conflictResolved) {
+        setSyncStatus("conflict");
+        window.setTimeout(() => setSyncStatus("signed_in"), 5000);
+      } else {
+        setSyncStatus("saved");
+        window.setTimeout(() => setSyncStatus("signed_in"), 2000);
+      }
     } catch (e) {
       console.error(e);
       setSyncStatus("error");
@@ -3045,11 +3098,53 @@ export default function App() {
     }
   };
 
+  const applyProgressAndSync = async (nextProgress, { allowReset = false } = {}) => {
+    const migrated = awardBadges(migrateProgress(typeof nextProgress === "object" ? nextProgress : {}));
+    userEarnedProgressRef.current = true;
+    setProgress(migrated);
+    if (supabaseConfigured && authEmail) {
+      setSyncStatus("syncing");
+      try {
+        const saved = await saveCloudProgress(migrated, {
+          cloudLoadCompleted: cloudLoadCompletedRef.current,
+          allowReset,
+        });
+        if (saved?.progress) setProgress(saved.progress);
+        setSyncStatus(saved?.conflictResolved ? "conflict" : "saved");
+        window.setTimeout(() => setSyncStatus("signed_in"), saved?.conflictResolved ? 5000 : 2000);
+      } catch (e) {
+        console.error(e);
+        setSyncStatus("error");
+      }
+    }
+    return migrated;
+  };
+
+  const handleResetDeviceOnly = async () => {
+    const fresh = syncProgression(defaultProgress());
+    userEarnedProgressRef.current = false;
+    setProgress(fresh);
+    setMode("home");
+  };
+
+  const handleResetEverywhere = async () => {
+    const fresh = syncProgression(defaultProgress());
+    userEarnedProgressRef.current = false;
+    setProgress(fresh);
+    if (supabaseConfigured && authEmail) {
+      await saveCloudProgress(fresh, { cloudLoadCompleted: true, allowReset: true, skipReconcile: true });
+    }
+    setMode("home");
+  };
+
   const updateProgress = (updater) => {
     setProgress((old) => {
       const beforeBadges = new Set(old.badges || []);
       const updated = typeof updater === "function" ? updater(old) : updater;
       const withBadges = touchProgressUpdatedAt(awardBadges(updated));
+      if (hasMeaningfulProgress(withBadges)) {
+        userEarnedProgressRef.current = true;
+      }
       const earnedNow = BADGES.find((b) => withBadges.badges.includes(b.id) && !beforeBadges.has(b.id));
       if (earnedNow) {
         // Give the "right answer" voice confirmation time first.
@@ -3146,12 +3241,11 @@ export default function App() {
     });
   };
 
-  const reset = () => {
-    const ok = typeof window !== "undefined" ? window.confirm("Reset Octavia's local progress on this device?") : false;
-    if (!ok) return;
-    setProgress(syncProgression(defaultProgress()));
-    setMode("home");
-  };
+  useEffect(() => {
+    if (hasMeaningfulProgress(progress)) {
+      userEarnedProgressRef.current = true;
+    }
+  }, []);
 
   const setPhonicsAudioEnabled = (enabled) => {
     updateProgress((old) => ({
@@ -3163,7 +3257,7 @@ export default function App() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-amber-50 via-sky-50 to-pink-50 text-slate-950">
       <style>{STYLES}</style>
-      <Header setMode={setMode} progress={progress} reset={reset} />
+      <Header setMode={setMode} progress={progress} />
       <BadgeToast badge={newBadge} />
       <div key={mode}>
         {mode === "home" && <Home setMode={setMode} progress={progress} />}
@@ -3234,17 +3328,19 @@ export default function App() {
               syncStatus,
             }}
             onImportProgress={async (raw) => {
-              const merged = awardBadges(migrateProgress(raw));
-              setProgress(merged);
-              if (supabaseConfigured && authEmail) {
-                await saveCloudProgress(merged);
-              }
+              await applyProgressAndSync(raw);
               return {
                 message: authEmail
                   ? "Progress imported, migrated, and saved to this device and cloud."
                   : "Progress imported and saved on this device.",
               };
             }}
+            onApplyProgress={applyProgressAndSync}
+            onResetDeviceOnly={handleResetDeviceOnly}
+            onResetEverywhere={handleResetEverywhere}
+            getStreak={getStreak}
+            adminPin={ADMIN_PIN}
+            adminPinWords={ADMIN_PIN_WORDS}
           />
         )}
         {mode === "admin" && (
@@ -3253,6 +3349,9 @@ export default function App() {
             setProgress={updateProgress}
             testMode={testMode}
             setTestMode={setTestMode}
+            onApplyProgress={applyProgressAndSync}
+            onResetDeviceOnly={handleResetDeviceOnly}
+            onResetEverywhere={handleResetEverywhere}
             cloud={{
               configured: supabaseConfigured,
               authEmail,

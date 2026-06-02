@@ -27,6 +27,54 @@ export function touchProgressUpdatedAt(progress, at = new Date()) {
   return { ...progress, updatedAt: at.toISOString() };
 }
 
+/** True when progress looks like a fresh wipe (no earned lifetime progress). */
+export function isBlankProgress(progress) {
+  if (!progress || typeof progress !== "object") return true;
+  const lifetime = Number(progress.lifetimeStars) || 0;
+  const correct = Number(progress.correct) || 0;
+  const badges = Array.isArray(progress.badges) ? progress.badges.length : 0;
+  return lifetime === 0 && correct === 0 && badges === 0;
+}
+
+/** True when progress has earned stars, badges, or correct answers. */
+export function hasMeaningfulProgress(progress) {
+  if (!progress || typeof progress !== "object") return false;
+  const lifetime = Number(progress.lifetimeStars) || 0;
+  const correct = Number(progress.correct) || 0;
+  const badges = Array.isArray(progress.badges) ? progress.badges.length : 0;
+  return lifetime > 0 || correct > 0 || badges > 0;
+}
+
+/**
+ * True when saving `incoming` would erase higher cloud progress.
+ * @param {object|null|undefined} incoming
+ * @param {object|null|undefined} existing
+ */
+export function wouldCauseProgressLoss(incoming, existing) {
+  if (!existing || !hasMeaningfulProgress(existing)) return false;
+  if (!incoming) return true;
+
+  const inLifetime = Number(incoming.lifetimeStars) || 0;
+  const exLifetime = Number(existing.lifetimeStars) || 0;
+  const inBadges = new Set(Array.isArray(incoming.badges) ? incoming.badges : []);
+  const exBadges = Array.isArray(existing.badges) ? existing.badges : [];
+
+  if (isBlankProgress(incoming) && hasMeaningfulProgress(existing)) return true;
+  if (inLifetime < exLifetime) return true;
+  if (inLifetime === 0 && exBadges.length > 0 && inBadges.size === 0) return true;
+  if (exBadges.some((id) => !inBadges.has(id)) && inLifetime === 0 && inBadges.size === 0) return true;
+
+  return false;
+}
+
+function mergeSpendableStars(primary, secondary) {
+  const p = Number(primary?.stars) || 0;
+  const s = Number(secondary?.stars) || 0;
+  if (isBlankProgress(primary) && s > 0) return s;
+  if (isBlankProgress(secondary) && p > 0) return p;
+  return Math.max(p, s);
+}
+
 function mergeDayEntries(a, b) {
   if (!a) return b ? { ...b } : undefined;
   if (!b) return { ...a };
@@ -78,10 +126,13 @@ export function mergeProgressUnion(primary, secondary) {
     dailyLog[key] = mergeDayEntries(primary.dailyLog?.[key], secondary.dailyLog?.[key]);
   }
 
+  const primaryLevel = Number(primary.level) || 0;
+  const secondaryLevel = Number(secondary.level) || 0;
+
   return {
     ...secondary,
     ...primary,
-    stars: Math.max(Number(primary.stars) || 0, Number(secondary.stars) || 0),
+    stars: mergeSpendableStars(primary, secondary),
     lifetimeStars: Math.max(Number(primary.lifetimeStars) || 0, Number(secondary.lifetimeStars) || 0),
     correct: Math.max(Number(primary.correct) || 0, Number(secondary.correct) || 0),
     attempts: Math.max(Number(primary.attempts) || 0, Number(secondary.attempts) || 0),
@@ -126,6 +177,7 @@ export function mergeProgressUnion(primary, secondary) {
       wordFamiliesUsed: mergedFamilies,
     },
     dailyLog,
+    level: Math.max(primaryLevel, secondaryLevel),
     updatedAt: getProgressUpdatedAt(primary) || getProgressUpdatedAt(secondary),
   };
 }
@@ -135,10 +187,15 @@ export function mergeProgressUnion(primary, secondary) {
  * @param {object|null|undefined} localProgress
  * @param {object|null|undefined} cloudProgress
  * @param {string|undefined} serverUpdatedAt optional row `updated_at` from Supabase
+ * @returns {{ progress: object, conflictResolved: boolean }}
  */
-export function reconcileProgress(localProgress, cloudProgress, serverUpdatedAt) {
-  if (!cloudProgress) return syncProgression(touchProgressUpdatedAt(localProgress));
-  if (!localProgress) return syncProgression(touchProgressUpdatedAt(cloudProgress));
+export function reconcileProgressWithMeta(localProgress, cloudProgress, serverUpdatedAt) {
+  if (!cloudProgress) {
+    return { progress: syncProgression(touchProgressUpdatedAt(localProgress)), conflictResolved: false };
+  }
+  if (!localProgress) {
+    return { progress: syncProgression(touchProgressUpdatedAt(cloudProgress)), conflictResolved: false };
+  }
 
   const localMs = parseProgressUpdatedAt(getProgressUpdatedAt(localProgress));
   const cloudMs = Math.max(
@@ -146,13 +203,33 @@ export function reconcileProgress(localProgress, cloudProgress, serverUpdatedAt)
     parseProgressUpdatedAt(serverUpdatedAt)
   );
 
-  let merged;
+  const conflictDetected =
+    wouldCauseProgressLoss(localProgress, cloudProgress) ||
+    (isBlankProgress(localProgress) && hasMeaningfulProgress(cloudProgress));
+
+  if (conflictDetected) {
+    console.warn(
+      "[progress] Possible progress conflict — keeping highest lifetime progress (local blank or lower than cloud)."
+    );
+  }
+
+  let primary;
+  let secondary;
   if (cloudMs > localMs) {
-    merged = mergeProgressUnion(cloudProgress, localProgress);
+    primary = cloudProgress;
+    secondary = localProgress;
   } else if (localMs > cloudMs) {
-    merged = mergeProgressUnion(localProgress, cloudProgress);
+    primary = localProgress;
+    secondary = cloudProgress;
   } else {
-    merged = mergeProgressUnion(localProgress, cloudProgress);
+    primary = localProgress;
+    secondary = cloudProgress;
+  }
+
+  let merged = mergeProgressUnion(primary, secondary);
+
+  if (wouldCauseProgressLoss(merged, cloudProgress) && hasMeaningfulProgress(cloudProgress)) {
+    merged = mergeProgressUnion(cloudProgress, localProgress);
   }
 
   const newestMs = Math.max(localMs, cloudMs);
@@ -161,7 +238,19 @@ export function reconcileProgress(localProgress, cloudProgress, serverUpdatedAt)
       ? { ...merged, updatedAt: new Date(newestMs).toISOString() }
       : touchProgressUpdatedAt(merged);
 
-  return syncProgression(stamped);
+  return {
+    progress: syncProgression(stamped),
+    conflictResolved: conflictDetected || wouldCauseProgressLoss(localProgress, cloudProgress),
+  };
+}
+
+/**
+ * @param {object|null|undefined} localProgress
+ * @param {object|null|undefined} cloudProgress
+ * @param {string|undefined} serverUpdatedAt
+ */
+export function reconcileProgress(localProgress, cloudProgress, serverUpdatedAt) {
+  return reconcileProgressWithMeta(localProgress, cloudProgress, serverUpdatedAt).progress;
 }
 
 /**
@@ -174,34 +263,41 @@ export function getCloudSyncStatus(cloud = {}) {
 
   if (!configured) {
     return {
-      id: "unconfigured",
-      label: "Offline / local only",
-      detail: "Cloud is not configured on this device (missing Supabase env).",
+      id: "offline",
+      label: "Cloud unavailable — using this device",
+      detail: "Progress is saved on this device.",
     };
   }
   if (!signedIn) {
     return {
       id: "offline",
-      label: "Offline / local only",
-      detail: "Progress is stored in this browser until you sign in to the family account.",
+      label: "Cloud unavailable — using this device",
+      detail: "Sign in to the family account to sync progress across devices.",
     };
   }
   if (status === "syncing") {
-    return { id: "saving", label: "Saving", detail: "Uploading progress to the cloud…" };
+    return { id: "saving", label: "Saving…", detail: "Uploading progress to the cloud." };
+  }
+  if (status === "conflict") {
+    return {
+      id: "conflict",
+      label: "Possible progress conflict — restored highest progress",
+      detail: "We kept the highest stars and badges from this device and the cloud.",
+    };
   }
   if (status === "error") {
     return {
       id: "error",
-      label: "Sync error",
+      label: "Cloud unavailable — using this device",
       detail: "Could not reach the cloud. Your latest changes are still on this device.",
     };
   }
-  if (status === "saved") {
-    return { id: "saved", label: "Saved", detail: "Progress is saved to this device and your family account." };
+  if (status === "saved" || status === "signed_in") {
+    return { id: "saved", label: "Synced", detail: "Progress is saved on this device and your family account." };
   }
   return {
     id: "saved",
-    label: "Saved",
+    label: "Synced",
     detail: "Signed in. Changes save here first, then sync to the cloud automatically.",
   };
 }

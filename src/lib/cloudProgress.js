@@ -1,8 +1,20 @@
 import { supabase, supabaseConfigured } from "./supabaseClient";
 import { sanitizeRewardClaims } from "./rewardClaims.js";
-import { reconcileProgress, touchProgressUpdatedAt } from "./progressSync.js";
+import {
+  reconcileProgress,
+  reconcileProgressWithMeta,
+  touchProgressUpdatedAt,
+  wouldCauseProgressLoss,
+  hasMeaningfulProgress,
+} from "./progressSync.js";
 
 export { reconcileProgress, touchProgressUpdatedAt } from "./progressSync.js";
+export {
+  isBlankProgress,
+  hasMeaningfulProgress,
+  wouldCauseProgressLoss,
+  reconcileProgressWithMeta,
+} from "./progressSync.js";
 export { supabase, supabaseConfigured } from "./supabaseClient";
 
 export async function getCurrentUser() {
@@ -57,12 +69,41 @@ export async function loadCloudProgress() {
   };
 }
 
-export async function saveCloudProgress(progress) {
+/**
+ * @param {object} progress
+ * @param {{ cloudLoadCompleted?: boolean, allowReset?: boolean, skipReconcile?: boolean }} [options]
+ */
+export async function saveCloudProgress(progress, options = {}) {
+  const { cloudLoadCompleted = true, allowReset = false, skipReconcile = false } = options;
+
   if (!supabaseConfigured) return { skipped: true, reason: "not_configured" };
   const user = await getCurrentUser();
   if (!user) return { skipped: true, reason: "not_signed_in" };
 
-  const stamped = touchProgressUpdatedAt(progress);
+  if (!cloudLoadCompleted) {
+    return { skipped: true, reason: "cloud_load_pending" };
+  }
+
+  let toSave = progress;
+  let conflictResolved = false;
+
+  if (!skipReconcile && !allowReset) {
+    const row = await loadCloudProgress();
+    const existing = row?.progress;
+    if (existing && hasMeaningfulProgress(existing)) {
+      if (wouldCauseProgressLoss(progress, existing)) {
+        console.warn(
+          "[progress] Blocked cloud overwrite: incoming progress would erase higher cloud progress.",
+          { incomingLifetime: progress?.lifetimeStars, cloudLifetime: existing?.lifetimeStars }
+        );
+        const reconciled = reconcileProgressWithMeta(progress, existing, row.serverUpdatedAt);
+        toSave = reconciled.progress;
+        conflictResolved = reconciled.conflictResolved;
+      }
+    }
+  }
+
+  const stamped = touchProgressUpdatedAt(toSave);
 
   const { error } = await supabase
     .from("reading_progress")
@@ -76,7 +117,7 @@ export async function saveCloudProgress(progress) {
     );
 
   if (error) throw error;
-  return { saved: true, progress: stamped };
+  return { saved: true, progress: stamped, conflictResolved };
 }
 
 /** @deprecated Use reconcileProgress — kept for existing imports/tests. */
@@ -101,6 +142,10 @@ export function runCloudSyncSelfTests() {
     console.assert(r?.skipped === true, "saveCloudProgress skips when not signed in");
   });
 
+  void saveCloudProgress({ lifetimeStars: 0, badges: [], correct: 0 }, { cloudLoadCompleted: false }).then((r) => {
+    console.assert(r?.reason === "cloud_load_pending", "saveCloudProgress skips before cloud load completes");
+  });
+
   const duped = sanitizeRewardClaims([
     { id: "story", title: "Pick bedtime story", cost: 5, claimedAt: "2026-01-01T12:00:00.000Z" },
     { id: "story", title: "Pick bedtime story", cost: 5, claimedAt: "2026-01-01T12:00:00.000Z" },
@@ -109,6 +154,13 @@ export function runCloudSyncSelfTests() {
 
   const mergedProg = reconcileProgress({ lifetimeStars: 5, correct: 5 }, { lifetimeStars: 20, correct: 18 });
   console.assert(mergedProg.xp >= 20 && mergedProg.level >= 2, "reconcileProgress should sync progression from max XP sources");
+
+  const blankOverCloud = reconcileProgressWithMeta(
+    { lifetimeStars: 0, badges: [], correct: 0, stars: 0 },
+    { lifetimeStars: 50, badges: ["first_star"], correct: 40, stars: 12 }
+  );
+  console.assert(blankOverCloud.progress.lifetimeStars === 50, "blank local must not wipe cloud lifetimeStars");
+  console.assert(blankOverCloud.conflictResolved === true, "blank local over cloud should flag conflict");
 
   const cloudNewer = reconcileProgress(
     { updatedAt: "2026-01-01T10:00:00.000Z", dailyLog: { "2026-05-15": { sentencesRead: 0, lastPlayedAt: "2026-01-01T10:00:00.000Z" } } },
