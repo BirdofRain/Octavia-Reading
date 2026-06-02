@@ -28,8 +28,14 @@ export function normalizeTeacherDifficulty(value) {
   return TEACHER_DIFFICULTY_OPTIONS.some((o) => o.id === id) ? id : "auto";
 }
 
+function sentenceSubject(readerName) {
+  const name = String(readerName || "").trim();
+  return name && name !== "your reader" ? name : "Your reader";
+}
+
 /** @param {object} day normalized today entry @param {object} progress */
-export function getTeacherRecommendation(day, progress) {
+export function getTeacherRecommendation(day, progress, options = {}) {
+  const readerSubject = sentenceSubject(options.readerName);
   const attempts = Number(day.attempts) || 0;
   const correct = Number(day.correct) || 0;
   const rate = attempts > 0 ? correct / attempts : null;
@@ -44,7 +50,7 @@ export function getTeacherRecommendation(day, progress) {
   if (sentencesRead === 0) {
     return {
       title: "Try Read It next",
-      message: "Octavia has not logged a sentence yet today. Read one short line together, then tap I read it!",
+      message: `${readerSubject} has not logged a sentence yet today. Read one short line together, then tap I read it!`,
       mode: "read",
       emoji: "📖",
       tone: "action",

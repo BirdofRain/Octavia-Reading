@@ -11,9 +11,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "icons/icon-192.png", "icons/icon-512.png"],
       manifest: {
-        name: "Octavia Reading Quest",
+        name: "Reading Quest",
         short_name: "Reading Quest",
-        description: "Reading, counting, badges, and rewards for Octavia.",
+        description: "Reading, counting, badges, and rewards for young readers.",
         theme_color: "#fef3c7",
         background_color: "#fff7ed",
         display: "standalone",

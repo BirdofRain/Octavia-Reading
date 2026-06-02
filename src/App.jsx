@@ -81,6 +81,28 @@ const APP_VERSION = "1.5-player-levels";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const ADMIN_PIN = "8403";
 const ADMIN_PIN_WORDS = "eight four zero three";
+const GENERIC_READER_NAME = "reader";
+const GENERIC_READER_LABEL = "your reader";
+
+function cleanChildName(value) {
+  const name = String(value || "").trim();
+  return name || "Reader";
+}
+
+function possessive(name) {
+  return /s$/i.test(name) ? `${name}'` : `${name}'s`;
+}
+
+function getReaderDisplay(progress, authEmail) {
+  const signedIn = Boolean(authEmail);
+  const name = signedIn ? cleanChildName(progress?.childName) : GENERIC_READER_LABEL;
+  return {
+    signedIn,
+    name,
+    greetingName: signedIn ? name : GENERIC_READER_NAME,
+    possessiveName: signedIn ? possessive(name) : "your reader's",
+  };
+}
 
 const STYLES = `
 @keyframes fall { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(350px); opacity: 0; } }
@@ -556,6 +578,10 @@ function runSelfTests() {
   console.assert(!parseProgressImportText("not json").ok, "import should reject invalid JSON");
   console.assert(!parseProgressImportText("[]").ok, "import should reject non-object JSON");
   console.assert(parseProgressImportText('{"stars":3,"dailyLog":{}}').ok, "import should accept minimal valid progress");
+  const anonymousReader = getReaderDisplay({ childName: "Octavia" }, null);
+  console.assert(anonymousReader.greetingName === "reader" && anonymousReader.name === "your reader", "signed-out reader display should be generic");
+  const signedInReader = getReaderDisplay({ childName: "Octavia" }, "family@example.com");
+  console.assert(signedInReader.name === "Octavia" && signedInReader.possessiveName === "Octavia's", "signed-in reader display should use progress childName");
   console.assert(getProgressSaveModeLabel({ configured: false }).id === "local", "unconfigured cloud should be local only");
   console.assert(getProgressSaveModeLabel({ configured: true, authEmail: "a@b.c", syncStatus: "saved" }).label === "Saved", "signed in saved should show Saved");
   console.assert(getCloudSyncStatus({ configured: true, authEmail: "a@b.c", syncStatus: "syncing" }).label === "Saving…", "syncing should show Saving…");
@@ -659,7 +685,7 @@ function ProgressStars({ stars }) {
   );
 }
 
-function Header({ setMode, progress }) {
+function Header({ setMode, progress, reader }) {
   const streak = getStreak(progress.dailyLog);
   return (
     <div className="sticky top-0 z-20 mb-4 rounded-b-3xl border-b-2 border-slate-900 bg-amber-100/95 px-4 py-3 shadow-lg backdrop-blur">
@@ -667,7 +693,9 @@ function Header({ setMode, progress }) {
         <button onClick={() => setMode("home")} className="flex items-center gap-2 rounded-2xl px-2 py-1 text-left font-black">
           <span className="grid h-11 w-11 place-items-center rounded-2xl border-2 border-slate-900 bg-white text-2xl shadow-[0_4px_0_rgba(15,23,42,1)]">📚</span>
           <span>
-            <span className="block text-sm uppercase tracking-wide text-slate-600">Octavia's</span>
+            <span className="block text-sm uppercase tracking-wide text-slate-600">
+              {reader.signedIn ? reader.possessiveName : "Family"}
+            </span>
             <span className="block text-xl leading-none">Reading Quest</span>
           </span>
         </button>
@@ -764,7 +792,7 @@ function GameLaunchCard({ game, progress, setMode, className = "" }) {
   );
 }
 
-function Home({ setMode, progress }) {
+function Home({ setMode, progress, reader }) {
   const earnedBadges = BADGES.filter((b) => progress.badges.includes(b.id));
   const today = normalizeDayEntry(progress.dailyLog[TODAY_KEY]);
   const coreGames = listCoreGames();
@@ -778,7 +806,7 @@ function Home({ setMode, progress }) {
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1 text-sm font-black text-emerald-900">
               <SparklesIcon /> Today’s quest: 5–8 minutes
             </div>
-            <h1 className="text-4xl font-black leading-tight sm:text-6xl">Hello Octavia! 👋</h1>
+            <h1 className="text-4xl font-black leading-tight sm:text-6xl">Hello, {reader.greetingName}! 👋</h1>
             <p className="mt-1 text-3xl font-black text-slate-800 sm:text-4xl">Tiny reading games. Big confidence.</p>
             <p className="mt-3 text-lg font-semibold text-slate-700">Start with sounds, build short words, then read a silly sentence out loud with Mom or Dad.</p>
           </div>
@@ -895,13 +923,13 @@ function StarCost({ cost }) {
   );
 }
 
-function KidRewards({ progress }) {
+function KidRewards({ progress, reader }) {
   const earnedBadges = BADGES.filter((b) => progress.badges.includes(b.id));
   return (
     <div className="rq-page mx-auto grid max-w-5xl gap-5 px-4 pb-10">
       <div className="rounded-[2rem] border-2 border-slate-900 bg-yellow-100 p-5 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
         <div className="text-7xl">🏆</div>
-        <h2 className="mt-2 text-4xl font-black">Octavia’s Badge Box</h2>
+        <h2 className="mt-2 text-4xl font-black">{reader.signedIn ? `${reader.possessiveName} Badge Box` : "My Badge Box"}</h2>
         <p className="mt-2 text-xl font-black">You have {progress.stars} stars to spend!</p>
         <div className="mt-3 flex justify-center">
           <StarCost cost={Math.min(progress.stars, 20)} />
@@ -2254,7 +2282,7 @@ function StatCard({ icon, label, value }) {
   );
 }
 
-function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, onApplyProgress, onResetDeviceOnly, onResetEverywhere }) {
+function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, onApplyProgress, onResetDeviceOnly, onResetEverywhere, reader }) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [adminLoginEmail, setAdminLoginEmail] = useState("");
@@ -2346,7 +2374,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text);
-        alert("Progress copied. Paste it into ChatGPT so I can analyze Octavia’s reading progress.");
+        alert(`Progress copied. Paste it into ChatGPT so I can analyze ${reader.possessiveName} reading progress.`);
       } else {
         alert(text);
       }
@@ -2383,7 +2411,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
   };
 
   const resetReadingBadgeTestData = () => {
-    const ok = window.confirm("Remove tested reading badge progress? This clears sound/word/sentence badge progress so Octavia can earn those badges later.");
+    const ok = window.confirm(`Remove tested reading badge progress? This clears sound/word/sentence badge progress so ${reader.name} can earn those badges later.`);
     if (!ok) return;
     setProgress((old) => {
       const cleanedDailyLog = Object.fromEntries(
@@ -2428,7 +2456,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
   };
 
   const removeTestingStarsAndRewards = () => {
-    const ok = window.confirm("Remove test-earned stars, reward claims, and star badges? This lets Octavia earn First Star and 10-Star Reader later.");
+    const ok = window.confirm(`Remove test-earned stars, reward claims, and star badges? This lets ${reader.name} earn First Star and 10-Star Reader later.`);
     if (!ok) return;
     setProgress((old) => ({
       ...old,
@@ -2534,7 +2562,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-emerald-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
         <h3 className="text-2xl font-black">Learning settings</h3>
-        <p className="mt-2 font-semibold text-slate-700">Pick the highest pack Octavia should see. Games include that level and easier content. Saved with cloud progress.</p>
+        <p className="mt-2 font-semibold text-slate-700">Pick the highest pack {reader.name} should see. Games include that level and easier content. Saved with cloud progress.</p>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div>
             <p className="font-black text-slate-800">Active reading level</p>
@@ -2606,7 +2634,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
         </div>
         <div className="mt-4">
           <p className="font-black text-slate-800">Phonics audio</p>
-          <p className="mt-1 text-sm font-semibold text-slate-600">Turn off so Octavia can practice letters quietly with you coaching. Applies to Letter Echo and Sound Pop.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-600">Turn off so {reader.name} can practice letters quietly with you coaching. Applies to Letter Echo and Sound Pop.</p>
           <button
             type="button"
             onClick={() =>
@@ -2824,7 +2852,7 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-red-50 p-5">
         <h3 className="text-2xl font-black">Testing cleanup</h3>
-        <p className="mt-2 font-semibold text-slate-700">Use these after parent testing so Octavia can earn badges and rewards for real later.</p>
+        <p className="mt-2 font-semibold text-slate-700">Use these after parent testing so {reader.name} can earn badges and rewards for real later.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <button onClick={removeTestingStarsAndRewards} className="rq-button rounded-2xl border-2 border-slate-900 bg-white px-4 py-3 text-left font-black shadow-[0_3px_0_rgba(15,23,42,1)]">
             ⭐ Remove test stars/reward claims
@@ -3267,14 +3295,15 @@ export default function App() {
       settings: { ...(old.settings || {}), phonicsAudioEnabled: Boolean(enabled) },
     }));
   };
+  const reader = getReaderDisplay(progress, authEmail);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-amber-50 via-sky-50 to-pink-50 text-slate-950">
       <style>{STYLES}</style>
-      <Header setMode={setMode} progress={progress} />
+      <Header setMode={setMode} progress={progress} reader={reader} />
       <BadgeToast badge={newBadge} />
       <div key={mode}>
-        {mode === "home" && <Home setMode={setMode} progress={progress} />}
+        {mode === "home" && <Home setMode={setMode} progress={progress} reader={reader} />}
         {mode === "letterEcho" && (
           <LetterEchoGame
             logWin={logWin}
@@ -3359,6 +3388,7 @@ export default function App() {
             getStreak={getStreak}
             adminPin={ADMIN_PIN}
             adminPinWords={ADMIN_PIN_WORDS}
+            reader={reader}
           />
         )}
         {mode === "admin" && (
@@ -3379,9 +3409,10 @@ export default function App() {
               onSignOut: handleCloudSignOut,
               onSyncNow: handleCloudSyncNow,
             }}
+            reader={reader}
           />
         )}
-        {mode === "kidRewards" && isModeUnlocked("kidRewards", progress) && <KidRewards progress={progress} />}
+        {mode === "kidRewards" && isModeUnlocked("kidRewards", progress) && <KidRewards progress={progress} reader={reader} />}
         {mode === "miniGames" && <MiniGames progress={progress} setProgress={updateProgress} testMode={testMode} />}
         {mode === "math" && (
           <MathAndCounting

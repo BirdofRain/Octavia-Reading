@@ -34,7 +34,7 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
     }
 
     const ok = window.confirm(
-      "Replace Octavia's current progress on this device with the pasted JSON?\n\nThis cannot be undone. If cloud sync is on, the new progress will be saved to your account too."
+      "Replace the current progress on this device with the pasted JSON?\n\nThis cannot be undone. If cloud sync is on, the new progress will be saved to your account too."
     );
     if (!ok) return;
 

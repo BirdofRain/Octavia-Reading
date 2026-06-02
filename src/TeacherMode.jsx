@@ -26,9 +26,10 @@ export function TeacherMode({
   getStreak,
   adminPin,
   adminPinWords,
+  reader,
 }) {
   const today = normalizeDayEntry(progress.dailyLog[todayKey]);
-  const recommendation = getTeacherRecommendation(today, progress);
+  const recommendation = getTeacherRecommendation(today, progress, { readerName: reader.name });
   const [note, setNote] = useState(today.notes || "");
   const [noteSaved, setNoteSaved] = useState(false);
   const focus = normalizeTeacherFocus(progress.settings?.teacherFocus);
@@ -98,7 +99,7 @@ export function TeacherMode({
       <div className="rounded-[2rem] border-2 border-slate-900 bg-teal-50 p-6 text-center shadow-[0_8px_0_rgba(15,23,42,1)]">
         <p className="text-sm font-black uppercase tracking-wide text-teal-900">For Summer</p>
         <h1 className="mt-1 text-4xl font-black">Parent &amp; Teacher Mode</h1>
-        <p className="mt-2 text-lg font-semibold text-slate-700">A calm view of today&apos;s practice and what to try next with Octavia.</p>
+        <p className="mt-2 text-lg font-semibold text-slate-700">A calm view of today&apos;s practice and what to try next with {reader.name}.</p>
         {correctRate != null && <p className="mt-2 text-sm font-bold text-slate-600">Success rate today: {correctRate}%</p>}
       </div>
 
@@ -261,7 +262,7 @@ export function TeacherMode({
           onClick={() => setMode("home")}
           className="rq-button mt-4 w-full rounded-2xl border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
         >
-          Back to Octavia&apos;s home
+          Back to {reader.signedIn ? `${reader.possessiveName} home` : "home"}
         </button>
       </section>
     </div>
