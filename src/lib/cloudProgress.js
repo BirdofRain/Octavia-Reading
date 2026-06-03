@@ -71,10 +71,16 @@ export async function loadCloudProgress() {
 
 /**
  * @param {object} progress
- * @param {{ cloudLoadCompleted?: boolean, allowReset?: boolean, skipReconcile?: boolean }} [options]
+ * @param {{ cloudLoadCompleted?: boolean, allowReset?: boolean, skipReconcile?: boolean, parentOverride?: boolean }} [options]
  */
 export async function saveCloudProgress(progress, options = {}) {
-  const { cloudLoadCompleted = true, allowReset = false, skipReconcile = false } = options;
+  const {
+    cloudLoadCompleted = true,
+    allowReset = false,
+    skipReconcile = false,
+    parentOverride = false,
+  } = options;
+  const forceDirectSave = skipReconcile || allowReset || parentOverride;
 
   if (!supabaseConfigured) return { skipped: true, reason: "not_configured" };
   const user = await getCurrentUser();
@@ -87,7 +93,7 @@ export async function saveCloudProgress(progress, options = {}) {
   let toSave = progress;
   let conflictResolved = false;
 
-  if (!skipReconcile && !allowReset) {
+  if (!forceDirectSave) {
     const row = await loadCloudProgress();
     const existing = row?.progress;
     if (existing && hasMeaningfulProgress(existing)) {

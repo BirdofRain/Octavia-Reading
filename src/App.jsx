@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   reconcileProgress,
   reconcileProgressWithMeta,
@@ -73,11 +74,14 @@ import {
   getProgressSaveModeLabel,
 } from "./lib/progressTransfer.js";
 import { touchProgressUpdatedAt, getCloudSyncStatus, isBlankProgress, wouldCauseProgressLoss } from "./lib/progressSync.js";
-import { honorParentProgressFields } from "./lib/progressRepair.js";
+import { honorParentProgressFields, applyProgressRepair } from "./lib/progressRepair.js";
 import { createProgressBackup, listProgressBackups } from "./lib/progressBackup.js";
+import { PROGRESS_STORAGE_KEY, writeProgressToLocalStorage } from "./lib/progressStorage.js";
+import { clearAppCacheAndReload } from "./lib/appCache.js";
 import { ParentProgressTools } from "./ParentProgressTools.jsx";
 
-const APP_VERSION = "1.5-player-levels";
+const APP_VERSION = "1.6-progress-repair-fix";
+const PARENT_OVERRIDE_GUARD_MS = 12000;
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const ADMIN_PIN = "8403";
 const ADMIN_PIN_WORDS = "eight four zero three";
@@ -2282,7 +2286,23 @@ function StatCard({ icon, label, value }) {
   );
 }
 
-function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, onApplyProgress, onResetDeviceOnly, onResetEverywhere, reader }) {
+function formatParentProgressSuccessMessage(progress, sourceLabel) {
+  return `Progress restored (${sourceLabel}): Level ${progress.level || 1}, ${progress.lifetimeStars ?? 0} lifetime stars, ${progress.stars ?? 0} spendable stars.`;
+}
+
+function AdminDashboard({
+  progress,
+  setProgress,
+  testMode,
+  setTestMode,
+  cloud,
+  onApplyParentProgress,
+  onApplyRepairFields,
+  onResetDeviceOnly,
+  onResetEverywhere,
+  onClearAppCache,
+  reader,
+}) {
   const [pin, setPin] = useState("");
   const [unlocked, setUnlocked] = useState(false);
   const [adminLoginEmail, setAdminLoginEmail] = useState("");
@@ -2875,7 +2895,8 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
 
       <ParentProgressTools
         progress={progress}
-        onApplyProgress={onApplyProgress}
+        onApplyParentProgress={onApplyParentProgress}
+        onApplyRepairFields={onApplyRepairFields}
         onResetDeviceOnly={onResetDeviceOnly}
         onResetEverywhere={onResetEverywhere}
         getStreak={getStreak}
@@ -2884,6 +2905,20 @@ function AdminDashboard({ progress, setProgress, testMode, setTestMode, cloud, o
         adminPinWords={ADMIN_PIN_WORDS}
         allowCloudResetUnlock
       />
+
+      <div className="rounded-[2rem] border-2 border-slate-900 bg-slate-100 p-5">
+        <h3 className="text-xl font-black">App update</h3>
+        <p className="mt-2 text-sm font-semibold text-slate-600">
+          If repair or import changes do not appear, clear the installed app cache and reload the latest version.
+        </p>
+        <button
+          type="button"
+          onClick={onClearAppCache}
+          className="rq-button mt-4 rounded-2xl border-2 border-slate-900 bg-white px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
+        >
+          Update app / clear app cache
+        </button>
+      </div>
 
       <div className="rounded-[2rem] border-2 border-slate-900 bg-white p-5">
         <h3 className="text-2xl font-black">Badge board</h3>
@@ -2971,9 +3006,10 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState("offline");
   const cloudLoadCompletedRef = useRef(!supabaseConfigured);
   const userEarnedProgressRef = useRef(false);
+  const parentOverrideInFlightRef = useRef(0);
   const [progress, setProgress] = useState(() => {
     try {
-      const saved = localStorage.getItem("octavia-reading-quest-progress");
+      const saved = localStorage.getItem(PROGRESS_STORAGE_KEY);
       return saved ? migrateProgress(JSON.parse(saved)) : syncProgression(defaultProgress());
     } catch {
       return syncProgression(defaultProgress());
@@ -2997,7 +3033,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("octavia-reading-quest-progress", JSON.stringify(progress));
+      writeProgressToLocalStorage(progress);
       localStorage.setItem("octavia-test-mode", String(testMode));
     } catch {}
   }, [progress, testMode]);
@@ -3016,6 +3052,10 @@ export default function App() {
       setAuthEmail(session.user.email ?? "");
 
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN") {
+        if (Date.now() - parentOverrideInFlightRef.current < PARENT_OVERRIDE_GUARD_MS) {
+          cloudLoadCompletedRef.current = true;
+          return;
+        }
         cloudLoadCompletedRef.current = false;
         void (async () => {
           setSyncStatus("syncing");
@@ -3027,13 +3067,19 @@ export default function App() {
               row?.serverUpdatedAt
             );
             const withBadges = awardBadges(merged);
-            setProgress(withBadges);
+            flushSync(() => setProgress(withBadges));
+            progressRef.current = withBadges;
+            writeProgressToLocalStorage(withBadges);
             cloudLoadCompletedRef.current = true;
             const saved = await saveCloudProgress(withBadges, {
               cloudLoadCompleted: true,
               allowReset: false,
             });
-            if (saved?.progress) setProgress(saved.progress);
+            if (saved?.progress && Date.now() - parentOverrideInFlightRef.current >= PARENT_OVERRIDE_GUARD_MS) {
+              flushSync(() => setProgress(saved.progress));
+              progressRef.current = saved.progress;
+              writeProgressToLocalStorage(saved.progress);
+            }
             if (saved?.conflictResolved || conflictResolved) {
               setSyncStatus("conflict");
               window.setTimeout(() => setSyncStatus("signed_in"), 5000);
@@ -3056,6 +3102,7 @@ export default function App() {
   useEffect(() => {
     if (!supabaseConfigured || !authEmail) return undefined;
     if (!cloudLoadCompletedRef.current) return undefined;
+    if (Date.now() - parentOverrideInFlightRef.current < PARENT_OVERRIDE_GUARD_MS) return undefined;
 
     const current = progressRef.current;
     if (!userEarnedProgressRef.current && !hasMeaningfulProgress(current)) {
@@ -3063,6 +3110,7 @@ export default function App() {
     }
 
     const id = window.setTimeout(async () => {
+      if (Date.now() - parentOverrideInFlightRef.current < PARENT_OVERRIDE_GUARD_MS) return;
       setSyncStatus((s) => (s === "error" || s === "conflict" ? s : "syncing"));
       try {
         const result = await saveCloudProgress(progressRef.current, {
@@ -3074,7 +3122,6 @@ export default function App() {
           window.setTimeout(() => setSyncStatus((prev) => (prev === "conflict" ? "signed_in" : prev)), 5000);
           return;
         }
-        if (result?.progress) setProgress(result.progress);
         setSyncStatus("saved");
         window.setTimeout(() => setSyncStatus((prev) => (prev === "saved" ? "signed_in" : prev)), 2000);
       } catch (e) {
@@ -3114,7 +3161,11 @@ export default function App() {
       const withBadges = awardBadges(merged);
       setProgress(withBadges);
       const saved = await saveCloudProgress(withBadges, { cloudLoadCompleted: true });
-      if (saved?.progress) setProgress(saved.progress);
+      if (saved?.progress && Date.now() - parentOverrideInFlightRef.current >= PARENT_OVERRIDE_GUARD_MS) {
+        flushSync(() => setProgress(saved.progress));
+        progressRef.current = saved.progress;
+        writeProgressToLocalStorage(saved.progress);
+      }
       if (saved?.conflictResolved || conflictResolved) {
         setSyncStatus("conflict");
         window.setTimeout(() => setSyncStatus("signed_in"), 5000);
@@ -3129,54 +3180,112 @@ export default function App() {
     }
   };
 
-  const applyProgressAndSync = async (nextProgress, { allowReset = false, forceParentOverride = false } = {}) => {
-    let prepared = typeof nextProgress === "object" && nextProgress ? { ...nextProgress } : {};
-    if (forceParentOverride) {
-      prepared = honorParentProgressFields(prepared);
-    }
-    const migrated = awardBadges(migrateProgress(prepared));
-    userEarnedProgressRef.current = true;
-    setProgress(migrated);
-    let syncError = null;
-    if (supabaseConfigured && authEmail) {
-      setSyncStatus("syncing");
+  const applyParentProgressOverride = useCallback(
+    async (nextProgress, sourceLabel = "parent-override", { allowReset = false } = {}) => {
+      console.log("[progress-repair] clicked", sourceLabel, nextProgress);
+      parentOverrideInFlightRef.current = Date.now();
+
       try {
-        const saved = await saveCloudProgress(migrated, {
-          cloudLoadCompleted: cloudLoadCompletedRef.current,
-          allowReset,
-          skipReconcile: forceParentOverride || allowReset,
-        });
-        if (saved?.skipped && saved.reason === "cloud_load_pending") {
-          syncError = "Cloud sync is still loading — saved on this device only.";
-        } else if (saved?.progress) {
-          setProgress(saved.progress);
+        const backup = createProgressBackup(progressRef.current);
+        if (!backup.ok) {
+          console.warn("[progress-repair] backup before override failed", backup.error);
         }
-        setSyncStatus(saved?.conflictResolved ? "conflict" : "saved");
-        window.setTimeout(() => setSyncStatus("signed_in"), saved?.conflictResolved ? 5000 : 2000);
-      } catch (e) {
-        console.error(e);
-        syncError = e?.message || "Cloud sync failed — saved on this device.";
-        setSyncStatus("error");
+
+        let prepared = typeof nextProgress === "object" && nextProgress ? { ...nextProgress } : {};
+        prepared = honorParentProgressFields(prepared);
+        const finalProgress = awardBadges(migrateProgress(prepared));
+
+        console.log("[progress-repair] applying", sourceLabel, {
+          level: finalProgress.level,
+          lifetimeStars: finalProgress.lifetimeStars,
+          stars: finalProgress.stars,
+          correct: finalProgress.correct,
+        });
+
+        userEarnedProgressRef.current = true;
+        flushSync(() => setProgress(finalProgress));
+        progressRef.current = finalProgress;
+        const wroteLocal = writeProgressToLocalStorage(finalProgress);
+        console.log("[progress-repair] localStorage written", PROGRESS_STORAGE_KEY, wroteLocal, {
+          level: finalProgress.level,
+          lifetimeStars: finalProgress.lifetimeStars,
+        });
+
+        setSyncStatus("syncing");
+        let syncError = null;
+
+        if (supabaseConfigured && authEmail) {
+          try {
+            const saved = await saveCloudProgress(finalProgress, {
+              cloudLoadCompleted: true,
+              allowReset,
+              parentOverride: !allowReset,
+              skipReconcile: !allowReset,
+            });
+            if (saved?.skipped && saved.reason === "cloud_load_pending") {
+              syncError = "Cloud sync is still loading — saved on this device only.";
+            } else if (saved?.progress) {
+              flushSync(() => setProgress(saved.progress));
+              progressRef.current = saved.progress;
+              writeProgressToLocalStorage(saved.progress);
+              console.log("[progress-repair] cloud saved", sourceLabel, {
+                level: saved.progress.level,
+                lifetimeStars: saved.progress.lifetimeStars,
+              });
+            } else {
+              console.log("[progress-repair] cloud saved", sourceLabel, saved);
+            }
+            setSyncStatus("saved");
+            window.setTimeout(() => setSyncStatus("signed_in"), 2000);
+          } catch (e) {
+            console.error("[progress-repair] failed", sourceLabel, e);
+            syncError = e?.message || "Cloud sync failed — saved on this device.";
+            setSyncStatus("error");
+          }
+        } else {
+          setSyncStatus("offline");
+        }
+
+        const message = formatParentProgressSuccessMessage(progressRef.current, sourceLabel);
+        if (syncError) {
+          return { ok: true, progress: progressRef.current, message: `${message} ${syncError}`, syncError };
+        }
+        return { ok: true, progress: progressRef.current, message };
+      } catch (err) {
+        console.error("[progress-repair] failed", sourceLabel, err);
+        return { ok: false, error: err?.message || "Could not apply progress", progress: progressRef.current };
       }
-    }
-    return { progress: migrated, syncError };
-  };
+    },
+    [authEmail]
+  );
+
+  const applyRepairFields = useCallback(
+    async (fields, sourceLabel = "repair-save") => {
+      console.log("[progress-repair] clicked", sourceLabel, fields);
+      const repaired = applyProgressRepair(progressRef.current, fields);
+      return applyParentProgressOverride(repaired, sourceLabel);
+    },
+    [applyParentProgressOverride]
+  );
 
   const handleResetDeviceOnly = async () => {
     const fresh = syncProgression(defaultProgress());
     userEarnedProgressRef.current = false;
-    setProgress(fresh);
+    parentOverrideInFlightRef.current = Date.now();
+    flushSync(() => setProgress(fresh));
+    progressRef.current = fresh;
+    writeProgressToLocalStorage(fresh);
     setMode("home");
   };
 
   const handleResetEverywhere = async () => {
-    const fresh = syncProgression(defaultProgress());
+    await applyParentProgressOverride(syncProgression(defaultProgress()), "reset-everywhere", { allowReset: true });
     userEarnedProgressRef.current = false;
-    setProgress(fresh);
-    if (supabaseConfigured && authEmail) {
-      await saveCloudProgress(fresh, { cloudLoadCompleted: true, allowReset: true, skipReconcile: true });
-    }
     setMode("home");
+  };
+
+  const handleClearAppCache = () => {
+    void clearAppCacheAndReload();
   };
 
   const updateProgress = (updater) => {
@@ -3371,18 +3480,14 @@ export default function App() {
               syncStatus,
             }}
             onImportProgress={async (raw) => {
-              const { progress: saved, syncError } = await applyProgressAndSync(raw, { forceParentOverride: true });
-              const levelLine = `Level ${saved.level} (${saved.levelTitle}) — ${saved.lifetimeStars} lifetime stars, ${saved.correct} correct.`;
-              if (syncError) {
-                return { message: `Progress imported on this device. ${levelLine} ${syncError}` };
+              const result = await applyParentProgressOverride(raw, "json-import");
+              if (!result.ok) {
+                return { ok: false, error: result.error || "Import failed" };
               }
-              return {
-                message: authEmail
-                  ? `Progress imported and synced to cloud. ${levelLine}`
-                  : `Progress imported on this device. ${levelLine}`,
-              };
+              return { ok: true, message: result.message };
             }}
-            onApplyProgress={applyProgressAndSync}
+            onApplyParentProgress={applyParentProgressOverride}
+            onApplyRepairFields={applyRepairFields}
             onResetDeviceOnly={handleResetDeviceOnly}
             onResetEverywhere={handleResetEverywhere}
             getStreak={getStreak}
@@ -3397,9 +3502,11 @@ export default function App() {
             setProgress={updateProgress}
             testMode={testMode}
             setTestMode={setTestMode}
-            onApplyProgress={applyProgressAndSync}
+            onApplyParentProgress={applyParentProgressOverride}
+            onApplyRepairFields={applyRepairFields}
             onResetDeviceOnly={handleResetDeviceOnly}
             onResetEverywhere={handleResetEverywhere}
+            onClearAppCache={handleClearAppCache}
             cloud={{
               configured: supabaseConfigured,
               authEmail,

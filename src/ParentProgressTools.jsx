@@ -5,11 +5,11 @@ import {
   getBackupPreview,
   listProgressBackups,
 } from "./lib/progressBackup.js";
-import { applyProgressRepair } from "./lib/progressRepair.js";
 
 export function ParentProgressTools({
   progress,
-  onApplyProgress,
+  onApplyParentProgress,
+  onApplyRepairFields,
   onResetDeviceOnly,
   onResetEverywhere,
   getStreak,
@@ -75,10 +75,10 @@ export function ParentProgressTools({
   const flash = (msg, tone = "success") => {
     setStatusMessage(msg);
     setStatusTone(tone);
-    window.setTimeout(() => setStatusMessage(null), 6000);
   };
 
   const handlePreviewBackup = (key) => {
+    console.log("[progress-repair] clicked", "preview-backup", key);
     setRestoreKey(key);
     const result = getBackupPreview(key, getStreak);
     if (result.ok) {
@@ -91,40 +91,54 @@ export function ParentProgressTools({
 
   const handleRestoreBackup = async () => {
     if (!restoreKey) return;
+    console.log("[progress-repair] clicked", "restore-backup", restoreKey);
     const result = getBackupPreview(restoreKey, getStreak);
     if (!result.ok) {
       flash(result.error || "Could not restore backup", "error");
       return;
     }
+    setRepairBusy(true);
     try {
-      const { progress: saved, syncError } = await onApplyProgress(result.progress, { forceParentOverride: true });
-      flash(
-        syncError
-          ? `Backup restored on this device. Level ${saved.level}. ${syncError}`
-          : `Backup restored — Level ${saved.level}, ${saved.lifetimeStars} lifetime stars.`
-      );
+      const applied = await onApplyParentProgress(result.progress, "restore-backup");
+      if (!applied?.ok) {
+        flash(applied?.error || "Restore failed", "error");
+        return;
+      }
+      flash(applied.message || "Backup restored.");
     } catch (e) {
+      console.error("[progress-repair] failed", e);
       flash(e?.message || "Restore failed", "error");
+    } finally {
+      setRepairBusy(false);
     }
   };
 
   const handleRepairSave = async () => {
+    console.log("[progress-repair] clicked", "repair-save", {
+      targetLevel: repairTargetLevel,
+      lifetimeStars: repairLifetime,
+      spendableStars: repairSpendable,
+      correct: repairCorrect,
+    });
     setRepairBusy(true);
     try {
-      const repaired = applyProgressRepair(progress, {
-        lifetimeStars: repairLifetime,
-        stars: repairSpendable,
-        correct: repairCorrect,
-        targetLevel: repairTargetLevel,
-        badgeIds: Array.from(repairBadges),
-      });
-      const { progress: saved, syncError } = await onApplyProgress(repaired, { forceParentOverride: true });
-      flash(
-        syncError
-          ? `Saved on this device — Level ${saved.level} (${saved.levelTitle}). ${syncError}`
-          : `Saved — Level ${saved.level} (${saved.levelTitle}), ${saved.lifetimeStars} lifetime stars, ${saved.stars} spendable.`
+      const applied = await onApplyRepairFields(
+        {
+          lifetimeStars: repairLifetime,
+          stars: repairSpendable,
+          correct: repairCorrect,
+          targetLevel: repairTargetLevel,
+          badgeIds: Array.from(repairBadges),
+        },
+        "repair-save"
       );
+      if (!applied?.ok) {
+        flash(applied?.error || "Could not save repair", "error");
+        return;
+      }
+      flash(applied.message || "Progress saved.");
     } catch (e) {
+      console.error("[progress-repair] failed", e);
       flash(e?.message || "Could not save repair", "error");
     } finally {
       setRepairBusy(false);
@@ -142,7 +156,7 @@ export function ParentProgressTools({
 
   const handleResetDevice = async () => {
     if (resetConfirm !== "RESET") {
-      flash('Type RESET in the box to confirm.', "error");
+      flash("Type RESET in the box to confirm.", "error");
       return;
     }
     const backup = createProgressBackup(progress);
@@ -151,13 +165,13 @@ export function ParentProgressTools({
       return;
     }
     await onResetDeviceOnly();
-    flash(`Backup created. Device reset complete.`);
+    flash("Backup created. Device reset complete.");
     setResetConfirm("");
   };
 
   const handleResetEverywhere = async () => {
     if (resetConfirm !== "RESET") {
-      flash('Type RESET in the box to confirm.', "error");
+      flash("Type RESET in the box to confirm.", "error");
       return;
     }
     if (!cloudResetUnlocked) {
@@ -170,7 +184,7 @@ export function ParentProgressTools({
       return;
     }
     await onResetEverywhere();
-    flash(`Backup created. Cloud and device progress reset.`);
+    flash("Backup created. Cloud and device progress reset.");
     setResetConfirm("");
   };
 
@@ -182,7 +196,7 @@ export function ParentProgressTools({
   return (
     <>
       {statusMessage && (
-        <div className={`mt-6 rounded-2xl border-2 px-4 py-3 font-bold ${statusStyles}`}>
+        <div className={`mt-6 rounded-2xl border-2 px-4 py-3 font-bold ${statusStyles}`} role="status">
           {statusMessage}
         </div>
       )}
@@ -219,9 +233,10 @@ export function ParentProgressTools({
             <button
               type="button"
               onClick={handleRestoreBackup}
-              className="rq-button mt-3 rounded-2xl border-2 border-slate-900 bg-emerald-200 px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)]"
+              disabled={repairBusy}
+              className="rq-button mt-3 rounded-2xl border-2 border-slate-900 bg-emerald-200 px-5 py-3 font-black shadow-[0_4px_0_rgba(15,23,42,1)] disabled:opacity-50"
             >
-              Restore this backup
+              {repairBusy ? "Restoring…" : "Restore this backup"}
             </button>
           </div>
         )}
@@ -230,7 +245,7 @@ export function ParentProgressTools({
       <section className="mt-6 rounded-[2rem] border-2 border-slate-900 bg-amber-50 p-5 shadow-[0_6px_0_rgba(15,23,42,1)]">
         <h2 className="text-2xl font-black">Repair progress</h2>
         <p className="mt-1 font-semibold text-slate-600">
-          Set target level, lifetime stars, or correct count. Changes save to this device and sync to cloud.
+          Set target level, lifetime stars, or correct count. The header updates immediately after save.
         </p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block">
@@ -275,7 +290,7 @@ export function ParentProgressTools({
           </label>
         </div>
         <p className="mt-2 text-sm font-semibold text-slate-600">
-          Current: Level <strong>{progress.level || 1}</strong> ({progress.levelTitle || "—"}), {progress.lifetimeStars ?? 0} lifetime stars.
+          Current: Level <strong>{progress.level || 1}</strong> ({progress.levelTitle || "—"}), {progress.lifetimeStars ?? 0} lifetime stars, {progress.stars ?? 0} spendable.
         </p>
         <p className="mt-4 font-black text-slate-800">Badges</p>
         <div className="mt-2 grid gap-2 sm:grid-cols-2">

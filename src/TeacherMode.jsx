@@ -20,7 +20,8 @@ export function TeacherMode({
   normalizeDayEntry,
   cloud,
   onImportProgress,
-  onApplyProgress,
+  onApplyParentProgress,
+  onApplyRepairFields,
   onResetDeviceOnly,
   onResetEverywhere,
   getStreak,
@@ -207,7 +208,8 @@ export function TeacherMode({
 
       <ParentProgressTools
         progress={progress}
-        onApplyProgress={onApplyProgress}
+        onApplyParentProgress={onApplyParentProgress}
+        onApplyRepairFields={onApplyRepairFields}
         onResetDeviceOnly={onResetDeviceOnly}
         onResetEverywhere={onResetEverywhere}
         getStreak={getStreak}

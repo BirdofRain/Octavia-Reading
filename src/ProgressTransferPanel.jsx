@@ -39,12 +39,19 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
     if (!ok) return;
 
     setImporting(true);
+    console.log("[progress-repair] clicked", "json-import");
     try {
       const outcome = await onImportProgress(result.data);
+      if (outcome?.ok === false) {
+        setImportError(outcome?.error || outcome?.message || "Import failed.");
+        return;
+      }
+      setImportError(null);
       setImportStatus(outcome?.message || "Progress imported and saved.");
-      setImportText("");
     } catch (e) {
+      console.error("[progress-repair] failed", e);
       setImportError(e?.message || "Import failed.");
+      setImportStatus(null);
     } finally {
       setImporting(false);
     }
@@ -121,10 +128,19 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
         </div>
       )}
 
-      {importStatus && !showImport && (
-        <p className="mt-4 rounded-2xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-950">
-          {importStatus}
-        </p>
+      {(importStatus || importError) && (
+        <div className="mt-4">
+          {importStatus && (
+            <p className="rounded-2xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-950" role="status">
+              {importStatus}
+            </p>
+          )}
+          {importError && (
+            <p className="mt-2 rounded-2xl border-2 border-red-700 bg-red-100 px-4 py-3 text-sm font-bold text-red-950" role="alert">
+              {importError}
+            </p>
+          )}
+        </div>
       )}
 
       {showImport && (
@@ -140,12 +156,6 @@ export function ProgressTransferPanel({ progress, cloud, onImportProgress }) {
             placeholder="Paste exported JSON here…"
             className="mt-3 w-full rounded-xl border-2 border-slate-900 bg-white px-3 py-2 font-mono text-xs leading-relaxed"
           />
-          {importError && <p className="mt-2 text-sm font-bold text-red-700">{importError}</p>}
-          {importStatus && (
-            <p className="mt-3 rounded-xl border-2 border-emerald-700 bg-emerald-100 px-4 py-3 text-sm font-bold text-emerald-950">
-              {importStatus}
-            </p>
-          )}
           <button
             type="button"
             onClick={handleImport}
